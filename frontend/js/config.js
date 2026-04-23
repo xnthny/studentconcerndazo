@@ -787,6 +787,53 @@ function loadAnnouncements() {
   if (changed) {
     saveAnnouncements();
   }
+
+  // Asynchronously try to fetch live announcements from backend and merge/replace local list.
+  // This keeps the existing local fallback immediately available while updating in the background.
+  if (typeof backendRequest === 'function') {
+    try {
+      backendRequest('/announcements', { method: 'GET' })
+        .then(function (data) {
+          if (!Array.isArray(data)) return;
+
+          // Map backend fields to the frontend shape used elsewhere in the app.
+          // Backend returns: { id, title, message, audience, created_at, is_draft }
+          const mapped = data.map(function (item) {
+            return {
+              id: item.id,
+              title: item.title || '',
+              body: item.message || item.body || '',
+              audience: item.audience || 'All Users',
+              // Format created_at into a readable date similar to existing local entries
+              date: item.created_at ? (function () { try { return new Date(item.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); } catch (e) { return String(item.created_at || ''); } })() : (item.date || ''),
+              draft: Boolean(item.is_draft || item.draft),
+              createdAt: item.created_at || item.createdAt || ''
+            };
+          });
+
+          // Replace current announcements with live set and persist a local copy.
+          ANNOUNCEMENTS = mapped;
+          try { saveAnnouncements(); } catch (e) { console.error('Failed to save fetched announcements:', e); }
+
+          // If the announcements UI is visible, refresh it.
+          try {
+            var annListEl = document.getElementById('ann-list');
+            if (annListEl && typeof renderAnnList === 'function') {
+              annListEl.innerHTML = renderAnnList();
+            }
+            if (typeof updateAnnouncementPublishedCount === 'function') updateAnnouncementPublishedCount();
+          } catch (e) {
+            // Non-fatal UI refresh error; continue silently.
+            console.warn('Failed to refresh announcements UI after fetch:', e);
+          }
+        })
+        .catch(function (err) {
+          console.warn('Could not fetch announcements from backend:', err && err.message ? err.message : err);
+        });
+    } catch (e) {
+      console.warn('Announcements fetch skipped:', e);
+    }
+  }
 }
 
 
