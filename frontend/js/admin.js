@@ -605,21 +605,21 @@ function renderProfile() {
   <div class="page-hdr"><div><div class="page-title">My Profile</div><div class="page-sub">Manage your personal information and photo</div></div></div>
   <div class="two-col">
     <div>
-      <div class="card" style="text-align:center;padding:32px 24px;">
-        <div style="position:relative;display:inline-block;margin-bottom:20px;">
-          <div id="prof-avatar" style="width:110px;height:110px;border-radius:50%;margin:0 auto;border:3px solid ${photo ? 'var(--cg)' : 'var(--border)'};overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:800;color:${u.col};background-color:${photo ? 'transparent' : u.bg};background-size:cover;background-position:center;background-repeat:no-repeat;${photo ? 'background-image:url(' + photo + ');' : ''}">
+      <div class="card" style="text-align:center;padding:20px 18px;">
+        <div style="position:relative;display:inline-block;margin-bottom:12px;">
+          <div id="prof-avatar" style="width:100px;height:100px;border-radius:50%;margin:0 auto;border:3px solid ${photo ? 'var(--cg)' : 'var(--border)'};overflow:hidden;display:flex;align-items:center;justify-content:center;font-size:32px;font-weight:800;color:${u.col};background-color:${photo ? 'transparent' : u.bg};background-size:cover;background-position:center;background-repeat:no-repeat;${photo ? 'background-image:url(' + photo + ');' : ''};box-shadow:inset 0 1px 0 rgba(255,255,255,0.03);">
             ${photo ? '' : '<span>' + u.ini + '</span>'}
           </div>
-          <label id="photo-upload-label" style="position:absolute;bottom:2px;right:2px;width:32px;height:32px;background:var(--cg);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.15);z-index:10;" title="Change photo" onclick="document.getElementById('photo-upload').click();">
+          <label id="photo-upload-label" style="position:absolute;right:-6px;bottom:-6px;width:34px;height:34px;background:var(--cg);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;border:3px solid #fff;box-shadow:0 6px 18px rgba(0,0,0,0.12);z-index:10;" title="Change photo" onclick="document.getElementById('photo-upload').click();">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
           </label>
           <input type="file" id="photo-upload" accept="image/*" style="display:none;" onchange="handlePhotoUpload(event)"/>
-          <div id="photo-save-note" style="font-size:12px;color:var(--n500);margin-top:8px;">Photos saved locally (not uploaded automatically)</div>
         </div>
-        <div style="font-size:20px;font-weight:800;color:var(--n800);letter-spacing:-0.3px;">${u.name}</div>
-        <div style="margin-top:6px;"><span style="display:inline-block;padding:3px 14px;border-radius:20px;font-size:11px;font-weight:700;background:${roleColors[currentRole]}22;color:${roleColors[currentRole]};border:1px solid ${roleColors[currentRole]}44;">${roleLabels[currentRole] || currentRole}</span></div>
-        <div style="font-size:12px;color:var(--n400);margin-top:8px;">${u.id}</div>
-        ${photo ? `<button class="btn btn-xs" style="margin-top:14px;color:var(--red);border-color:#fecaca;" onclick="removePhoto()">Remove Photo</button>` : ''}
+        <div id="photo-save-note" style="font-size:11px;color:var(--n400);margin-top:-4px;margin-bottom:8px;">Saved locally — not uploaded automatically</div>
+        <div style="font-size:18px;font-weight:800;color:var(--n800);letter-spacing:-0.3px;margin-top:4px;">${u.name}</div>
+        <div style="margin-top:6px;"><span style="display:inline-block;padding:4px 12px;border-radius:16px;font-size:11px;font-weight:700;background:${roleColors[currentRole]}22;color:${roleColors[currentRole]};border:1px solid ${roleColors[currentRole]}33;">${roleLabels[currentRole] || currentRole}</span></div>
+        <div style="font-size:12px;color:var(--n400);margin-top:6px;">${u.id}</div>
+        ${photo ? `<button class="btn btn-xs" style="margin-top:10px;background:transparent;border:1px solid var(--n100);color:var(--n600);box-shadow:none;" onclick="removePhoto()">Remove photo</button>` : ''}
       </div>
       <div class="card">
         <div class="card-title">Edit Information</div>
