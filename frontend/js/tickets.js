@@ -22,7 +22,7 @@ function openTicket(id) {
         ['Status', badge(t.status)],
         ['Department', t.dept],
         ['Category', t.category],
-        ['Submitted by', t.student],
+        ['Submitted by', (typeof studentDisplayName === 'function' ? studentDisplayName(t.student) : t.student)],
         ...(isStaff && sInfo.course ? [['Course', sInfo.course], ['Year Level', sInfo.year || '—']] : isStaff ? [['Course', '—']] : []),
         ['Date Filed', t.date]
       ]
@@ -105,11 +105,11 @@ function deleteMyTicket(id) {
 }
 
 function renderThread(t) {
-  const sti = t.student.split(' ').map((n) => n[0]).join('').slice(0, 2);
+  const sti = (typeof studentInitials === 'function') ? studentInitials(t.student) : (String(t.student || '').split(' ').map((n) => n[0]).join('').slice(0, 2));
   const ownFrom = currentRole === 'student' ? 'student' : 'staff';
 
   // Precompute profile photos for thread avatars
-  const studentUser = Array.isArray(USERS) ? USERS.find((u) => u.name === t.student) : null;
+  const studentUser = Array.isArray(USERS) ? USERS.find((u) => u.name === (typeof studentDisplayName === 'function' ? studentDisplayName(t.student) : String(t.student || ''))) : null;
   const studentPhoto = studentUser && profilePhotos[studentUser.id] ? profilePhotos[studentUser.id] : null;
   const staffPhotoByRole = {};
   // Check ACCOUNTS first (registrar, accounting are stored here)
@@ -195,7 +195,7 @@ function renderThread(t) {
     const isOwn = senderRole ? senderRole === currentRole : from === ownFrom;
     const rowClass = isOwn ? 'msg-row staff' : 'msg-row';
     const metaAlign = isOwn ? 'text-align:right;' : '';
-    const metaLabel = from === 'staff' ? `${t.dept} Staff` : t.student;
+    const metaLabel = from === 'staff' ? `${t.dept} Staff` : (typeof studentDisplayName === 'function' ? studentDisplayName(t.student) : t.student);
     const stamp = formatThreadStamp(date);
     const metaText = stamp ? `${metaLabel} · ${stamp}` : metaLabel;
     // Resolve profile photo for this message's sender

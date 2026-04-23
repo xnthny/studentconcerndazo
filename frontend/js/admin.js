@@ -481,14 +481,47 @@ function renderAnnList() {
     .join('') || '<div style="color:var(--n300);font-size:12px;padding:12px 0;">No announcements yet</div>';
 }
 
-function publishAnn(isDraft) {
+async function publishAnn(isDraft) {
   const title = document.getElementById('ann-title')?.value?.trim(),
     body = document.getElementById('ann-body')?.value?.trim(),
-    aud = document.getElementById('ann-aud')?.value;
+    aud = document.getElementById('ann-aud')?.value || 'All Users';
   if (!title || !body) {
     toast('Please fill in title and message', 'error');
     return;
   }
+
+  // Prefer backend create; fall back to local storage on failure
+  if (typeof apiCreateAnnouncement === 'function') {
+    try {
+      const resp = await apiCreateAnnouncement(title, body, aud, Boolean(isDraft));
+      if (resp && (resp.id || resp.title)) {
+        const mapped = {
+          id: resp.id,
+          title: resp.title || title,
+          body: resp.message || resp.body || body,
+          audience: resp.audience || aud || 'All Users',
+          date: resp.created_at ? (function () { try { return new Date(resp.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); } catch (e) { return String(resp.created_at || ''); } })() : (resp.date || new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })),
+          draft: Boolean(resp.is_draft || resp.draft || isDraft),
+          createdAt: resp.created_at || resp.createdAt || new Date().toISOString()
+        };
+        ANNOUNCEMENTS.unshift(mapped);
+        try { saveAnnouncements(); } catch (e) { console.error('Failed to save announcement:', e); }
+        toast(isDraft ? 'Draft saved!' : 'Announcement published!');
+        document.getElementById('ann-title').value = '';
+        document.getElementById('ann-body').value = '';
+        const al = document.getElementById('ann-list');
+        if (al) al.innerHTML = renderAnnList();
+        updateAnnouncementPublishedCount();
+        return;
+      }
+      throw new Error('Invalid response from server');
+    } catch (err) {
+      console.warn('Failed to create announcement via backend, falling back to local save:', err && err.message ? err.message : err);
+      // continue to local fallback
+    }
+  }
+
+  // Local fallback (preserve existing behavior)
   ANNOUNCEMENTS.unshift({ id: 'ANN-' + String(ANNOUNCEMENTS.length + 1).padStart(3, '0'), title, body, date: new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }), createdAt: new Date().toISOString(), audience: aud, draft: isDraft });
   const saved = saveAnnouncements();
   if (!saved) {
@@ -502,15 +535,43 @@ function publishAnn(isDraft) {
   updateAnnouncementPublishedCount();
 }
 
-function deleteAnn(announcementId) {
+async function deleteAnn(announcementId) {
   const idx = ANNOUNCEMENTS.findIndex((a) => a && a.id === announcementId);
   if (idx < 0) {
     toast('Announcement not found', 'error');
     return;
   }
+  // If id looks like a backend UUID, attempt backend delete; otherwise treat as local-only
+  const isUuid = typeof announcementId === 'string' && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(announcementId);
+
+  if (isUuid && typeof apiDeleteAnnouncement === 'function') {
+    try {
+      await apiDeleteAnnouncement(announcementId);
+    } catch (err) {
+      console.warn('Failed to delete announcement on backend, deleting locally:', err && err.message ? err.message : err);
+      ANNOUNCEMENTS.splice(idx, 1);
+      saveAnnouncements();
+      toast('Deleted locally (backend unavailable)', 'error');
+      const al = document.getElementById('ann-list');
+      if (al) al.innerHTML = renderAnnList();
+      updateAnnouncementPublishedCount();
+      return;
+    }
+
+    // Backend delete succeeded — also remove locally
+    ANNOUNCEMENTS.splice(idx, 1);
+    saveAnnouncements();
+    toast('Deleted');
+    const al = document.getElementById('ann-list');
+    if (al) al.innerHTML = renderAnnList();
+    updateAnnouncementPublishedCount();
+    return;
+  }
+
+  // Local-only id (e.g., ANN-001) — remove locally without contacting backend
   ANNOUNCEMENTS.splice(idx, 1);
   saveAnnouncements();
-  toast('Deleted');
+  toast('Deleted locally');
   const al = document.getElementById('ann-list');
   if (al) al.innerHTML = renderAnnList();
   updateAnnouncementPublishedCount();
@@ -690,7 +751,7 @@ function handlePhotoUpload(event) {
   const file = event.target.files[0];
   if (!file) return;
   
-  console.log('Photo upload started:', file.name, 'size:', file.size);
+  
   
   if (!currentUser || !currentUser.id) {
     toast('❌ No user logged in', 'error');
@@ -771,7 +832,7 @@ function handlePhotoUpload(event) {
           return;
         }
         
-        console.log('Photo compressed to', Math.round(compressedData.length / 1024), 'KB');
+        
         
         profilePhotos[currentUser.id] = compressedData;
         
@@ -785,12 +846,10 @@ function handlePhotoUpload(event) {
             savedFlag = false;
           }
           const sizeKb = Math.round(compressedData.length / 1024);
-          if (savedFlag) {
+            if (savedFlag) {
             toast(`✓ Photo saved! (${sizeKb} KB)`);
-            console.log('✓ Photo saved successfully');
           } else {
             toast(`✓ Photo loaded! (${sizeKb} KB - won't persist on refresh)`);
-            console.log('⚠ Photo in memory only - localStorage is full or save skipped');
           }
         } else {
           const sizeKb = Math.round(compressedData.length / 1024);
@@ -861,13 +920,12 @@ function removePhoto() {
 
 // Setup photo upload button when profile page is shown
 function setupPhotoUploadButton() {
-  console.log('📸 setupPhotoUploadButton called');
+  
   try {
     const photoUploadInput = document.getElementById('photo-upload');
     const photoLabel = document.getElementById('photo-upload-label');
     
-    console.log('Input element exists?', !!photoUploadInput);
-    console.log('Label element exists?', !!photoLabel);
+    
     
     if (!photoUploadInput) {
       console.warn('❌ Photo upload input not found - HTML may not have rendered');
@@ -880,13 +938,11 @@ function setupPhotoUploadButton() {
     // Test the onclick handler on label
     if (photoLabel) {
       photoLabel.onclick = function() {
-        console.log('Label clicked, triggering file dialog...');
         photoUploadInput.click();
       };
-      console.log('Label onclick handler set');
     }
     
-    console.log('✓ Photo upload button ready - handler attached');
+    
   } catch (e) {
     console.error('❌ Error setting up photo button:', e);
   }

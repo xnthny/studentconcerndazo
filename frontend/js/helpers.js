@@ -24,6 +24,33 @@ function isCurrentStudentTicket(t) {
   return String(t.student || '').trim().toLowerCase() === String(currentUser.name || '').trim().toLowerCase();
 }
 
+// Safely derive a display name for a ticket's student field.
+// Accepts either a string, an object with common name fields, or null/undefined.
+function studentDisplayName(student) {
+  if (!student && student !== 0) return 'Unknown';
+  if (typeof student === 'string') {
+    const s = String(student).trim();
+    return s || 'Unknown';
+  }
+  if (typeof student === 'object') {
+    const name = student.full_name || student.name || student.username || student.uname || student.displayName || student.email || student.student_id || student.id;
+    if (name) return String(name).trim();
+    if (student.first_name || student.last_name) return ((student.first_name || '') + ' ' + (student.last_name || '')).trim();
+    return 'Unknown';
+  }
+  return String(student);
+}
+
+// Produce up to two-character initials from a student value (string or object).
+function studentInitials(student) {
+  const name = studentDisplayName(student);
+  if (!name || name === 'Unknown') return '--';
+  const parts = name.split(/\s+/).filter(Boolean);
+  if (!parts.length) return (name[0] || '-').toUpperCase();
+  const initials = parts.map((p) => (p[0] || '')).join('').slice(0, 2).toUpperCase();
+  return initials || '--';
+}
+
 function getCurrentStudentTickets() {
   return TICKETS.filter((t) => isCurrentStudentTicket(t));
 }
@@ -52,6 +79,14 @@ function getTicketStudentInfo(ticket) {
   const directYear = String(ticket.year || ticket.studentYear || '').trim();
   if (directCourse || directYear) {
     return { course: directCourse, year: directYear };
+  }
+
+  // If the ticket's `student` relation is an object with course/year, prefer it.
+  if (ticket.student && typeof ticket.student === 'object') {
+    const s = ticket.student;
+    const sc = String(s.course || s.program || s.degree || s.program_name || '').trim();
+    const sy = String(s.year || s.year_level || s.year_lvl || s.yearLevel || s.level || '').trim();
+    if (sc || sy) return { course: sc, year: sy };
   }
 
   // Fallback to legacy name-based lookup.
@@ -134,7 +169,7 @@ function togglePw(id) {
 }
 
 function tbl(tickets, showStu = true, showDeptInfo = false) {
-  if (!tickets.length) return `<div class="empty-state">${IC.list}<p>No tickets found</p></div>`;
+  if (!tickets || !tickets.length) return `<div class="empty-state">${IC.list}<p>No tickets found</p></div>`;
   return `<div class="tbl-wrap"><table class="tbl"><thead><tr>
     <th>Ticket #</th>
     ${showStu ? '<th>Student</th>' : ''}
@@ -147,20 +182,45 @@ function tbl(tickets, showStu = true, showDeptInfo = false) {
   </tr></thead><tbody>
   ${tickets
     .map((t) => {
+      // Normalize fields with safe fallbacks for backend rows that may differ in shape
+      const ticketNumber = String((t && (t.ticket_number || t.ticketNumber)) || '').trim();
+      const idVal = String((t && t.id) || '').trim();
+      const openId = idVal || ticketNumber || '';
+      // Display prefers `ticket_number`; if absent, show a shortened UUID or id
+      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+      const tidDisplay = ticketNumber || (uuidRe.test(idVal) ? idVal.slice(0, 8) + '…' : idVal);
+      const category = String((t && (t.category || t.department || t.dept)) || '').trim();
+      const subject = String((t && t.subject) || '').trim();
+      const status = String((t && t.status) || '').trim();
+      const rawDate = (t && (t.date || t.created_at || t.createdAt)) || '';
+      let dateDisplay = '';
+      try {
+        if (rawDate) {
+          const dt = new Date(rawDate);
+          if (!isNaN(dt)) dateDisplay = dt.toLocaleDateString();
+          else {
+            const s = String(rawDate || '').trim();
+            dateDisplay = s ? (s.length > 10 ? s.slice(0, 10) : s) : '';
+          }
+        }
+      } catch (e) {
+        dateDisplay = String(rawDate || '');
+      }
+
       return `<tr>
-      <td><span style="font-weight:800;color:var(--cg-dark);font-size:12px;">${t.id}</span></td>
+      <td><span style="font-weight:800;color:var(--cg-dark);font-size:12px;">${tidDisplay || '—'}</span></td>
       ${showStu ? `<td>
         <div style="display:flex;align-items:center;gap:8px;">
-          <div style="width:28px;height:28px;border-radius:50%;background:var(--cg-pale);color:var(--cg-dark);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;flex-shrink:0;">${t.student.split(' ').map((n) => n[0]).join('').slice(0, 2)}</div>
-          <span style="font-weight:600;">${t.student}</span>
+          <div style="width:28px;height:28px;border-radius:50%;background:var(--cg-pale);color:var(--cg-dark);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:800;flex-shrink:0;">${studentInitials(t && t.student)}</div>
+          <span style="font-weight:600;">${studentDisplayName(t && t.student)}</span>
         </div>
       </td>` : ''}
       ${showDeptInfo ? `<td>${deptPill(t)}</td>` : ''}
-      <td style="color:var(--n500);">${t.category}</td>
-      <td style="max-width:170px;"><span style="font-weight:500;">${t.subject}</span></td>
-      <td>${badge(t.status)}</td>
-      <td style="color:var(--n300);font-size:11px;">${t.date.slice(5)}</td>
-      <td><div style="display:flex;gap:6px;justify-content:flex-end;"><button class="btn btn-sm btn-primary" onclick="openTicket('${t.id}')">Open</button>${!showStu && currentPageId === 's-tickets' ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteMyTicket('${t.id}')">${IC.trash} Delete</button>` : ''}${showStu && currentRole === 'accounting' && (currentPageId === 'a-concerns' || currentPageId === 'a-dash') ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteAccountingConcern('${t.id}')">Delete</button>` : ''}</div></td>
+      <td style="color:var(--n500);">${category || '—'}</td>
+      <td style="max-width:170px;"><span style="font-weight:500;">${subject || '—'}</span></td>
+      <td>${badge(status || 'Pending')}</td>
+      <td style="color:var(--n300);font-size:11px;">${dateDisplay}</td>
+      <td><div style="display:flex;gap:6px;justify-content:flex-end;"><button class="btn btn-sm btn-primary" onclick="openTicket('${openId || ''}')">Open</button>${!showStu && currentPageId === 's-tickets' ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteMyTicket('${openId || ''}')">${IC.trash} Delete</button>` : ''}${showStu && currentRole === 'accounting' && (currentPageId === 'a-concerns' || currentPageId === 'a-dash') ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteAccountingConcern('${openId || ''}')">Delete</button>` : ''}</div></td>
     </tr>`;
     })
     .join('')}</tbody></table></div>`;

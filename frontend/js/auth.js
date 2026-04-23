@@ -379,13 +379,11 @@ function doLogin() {
 
   const accountKey = resolveAccountKey(uname);
 
-  // Staff credentials are managed locally so password changes persist immediately.
+  // For staff accounts, attempt backend login first; fall back to local auth if backend is unavailable.
   const localAcc = ACCOUNTS[accountKey];
   const localRole = String(localAcc?.role || '').toLowerCase();
-  if (localAcc && ['accounting', 'registrar', 'admin'].includes(localRole)) {
-    doLoginLocal(accountKey, pw, errEl);
-    return;
-  }
+  // Intentionally do NOT return here so the shared backend-first flow below runs for staff as well.
+  // If backend login fails it will call doLoginLocal(accountKey, pw, errEl) as a fallback.
 
   if (typeof isDeletedUserRecord === 'function' && isDeletedUserRecord(null, uname)) {
     errEl.style.display = 'block';
@@ -396,7 +394,8 @@ function doLogin() {
 
   // Try backend API first using backendRequest helper, fallback to local auth
   if (typeof backendRequest === 'function') {
-    backendRequest('/auth/login', { method: 'POST', body: { username: accountKey, password: pw } })
+    // Use the originally typed username for backend auth attempts
+    backendRequest('/auth/login', { method: 'POST', body: { username: uname, password: pw } })
       .then((response) => {
         if (typeof isDeletedUserRecord === 'function' && isDeletedUserRecord(response.user, uname)) {
           errEl.style.display = 'block';
@@ -516,7 +515,8 @@ function doLogin() {
 
   // If backendRequest helper not available, fallback to existing apiLogin or local auth
   if (typeof apiLogin !== 'undefined') {
-    apiLogin(accountKey, pw)
+    // When using the apiLogin helper, also send the originally typed username
+    apiLogin(uname, pw)
       .then((response) => {
         // reuse existing success handling (delegate to original flow)
         if (typeof isDeletedUserRecord === 'function' && isDeletedUserRecord(response.user, uname)) {

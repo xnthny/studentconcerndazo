@@ -35,18 +35,19 @@ router.post('/', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'Title and message are required' });
     }
 
+    // Insert announcement. Do not assume a `created_by` column exists in the table;
+    // keep the insert to the safe, commonly present columns only.
+    const insertPayload = {
+      title,
+      message,
+      audience: audience || 'All Users',
+      is_draft: isDraft || false,
+      created_at: new Date().toISOString()
+    };
+
     const { data: announcement, error } = await supabase
       .from('announcements')
-      .insert([
-        {
-          title,
-          message,
-          audience: audience || 'All Users',
-          is_draft: isDraft || false,
-          created_by: req.user.userId,
-          created_at: new Date().toISOString()
-        }
-      ])
+      .insert([insertPayload])
       .select()
       .single();
 
@@ -67,6 +68,12 @@ router.delete('/:announcementId', verifyToken, async (req, res) => {
     }
 
     const { announcementId } = req.params;
+
+    // Ensure the id looks like a UUID before sending to a UUID-typed column.
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    if (!uuidRegex.test(String(announcementId || ''))) {
+      return res.status(400).json({ error: 'Invalid announcement id' });
+    }
 
     const { error } = await supabase
       .from('announcements')

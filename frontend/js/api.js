@@ -278,7 +278,7 @@ function submitConcern() {
       }
     })
       .then(function (response) {
-        console.log('Ticket synced with backend');
+        console.debug('Ticket synced with backend');
       })
       .catch(function (error) {
         console.log('Backend sync failed, using local storage:', error && error.message ? error.message : error);
@@ -287,7 +287,7 @@ function submitConcern() {
     // Fallback to existing helper when backendRequest isn't available
     apiSubmitTicket(dept, subj, detail, cat)
       .then(function (response) {
-        console.log('Ticket synced with backend');
+        console.debug('Ticket synced with backend');
       })
       .catch(function (error) {
         console.log('Backend sync failed, using local storage:', error && error.message ? error.message : error);

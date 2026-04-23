@@ -64,10 +64,17 @@ async function apiCall(endpoint, options = {}) {
     ...options.headers,
   };
 
-  // Add auth token if available
+  // Add auth token if available. Prefer validated token, but fall back to raw localStorage token
   const auth = getAuthTokenContext();
-  if (auth.valid && auth.token) {
+  if (auth && auth.valid && auth.token) {
     headers['Authorization'] = `Bearer ${auth.token}`;
+  } else {
+    try {
+      const rawTok = localStorage.getItem('authToken');
+      if (rawTok) headers['Authorization'] = `Bearer ${rawTok}`;
+    } catch (e) {
+      // ignore localStorage access errors
+    }
   }
 
   const bases = getApiBases();
@@ -500,10 +507,10 @@ async function apiGetAnnouncements() {
   return response;
 }
 
-async function apiCreateAnnouncement(title, content, targetRole) {
+async function apiCreateAnnouncement(title, message, audience = 'All Users', isDraft = false) {
   const response = await apiCall('/announcements', {
     method: 'POST',
-    body: { title, content, target_role: targetRole }
+    body: { title, message, audience, isDraft }
   });
   return response;
 }
