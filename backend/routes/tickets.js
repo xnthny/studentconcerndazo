@@ -26,15 +26,30 @@ router.get('/user/:userId', verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
 
-    const { data: tickets, error } = await supabase
+    // Try querying by `user_id` (preferred). If the column doesn't exist in the
+    // tickets table (older schema uses `student_id`), fall back to `student_id`.
+    const primary = await supabase
       .from('tickets')
       .select('*')
       .eq('user_id', userId)
       .order('created_at', { ascending: false });
 
-    if (error) throw error;
+    if (primary.error) {
+      const msg = String(primary.error.message || primary.error || '');
+      if (/column .*user_id .*does not exist/i.test(msg) || /tickets\.user_id/i.test(msg)) {
+        // Fallback to student_id when tickets.user_id is not present in DB
+        const fallback = await supabase
+          .from('tickets')
+          .select('*')
+          .eq('student_id', userId)
+          .order('created_at', { ascending: false });
+        if (fallback.error) throw fallback.error;
+        return res.json(fallback.data || []);
+      }
+      throw primary.error;
+    }
 
-    res.json(tickets);
+    res.json(primary.data || []);
   } catch (error) {
     console.error('Get user tickets error:', error);
     res.status(500).json({ error: 'Failed to fetch tickets', message: error.message });

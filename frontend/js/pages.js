@@ -194,8 +194,52 @@ function renderSubmitForm() {
 
 function renderMyTickets() {
   const my = getCurrentStudentTickets();
-  return `<div><div class="page-hdr"><div><div class="page-title">My Tickets</div><div class="page-sub">${my.length} concern(s) submitted</div></div></div>
-  <div class="card">${buildFilterBar('s-tickets', false, false)}<div id="tbl-container">${filterTbl(my, false, false, true)}</div></div></div>`;
+
+  // Background: attempt to load real tickets from backend and update the table when available
+  try {
+    if (typeof apiGetUserTickets === 'function' && currentUser && currentUser.id) {
+      // schedule after DOM insert (showPage will set innerHTML from this return value)
+      setTimeout(function () {
+        apiGetUserTickets(currentUser.id)
+          .then(function (rows) {
+            if (!Array.isArray(rows)) return;
+
+            var el = document.getElementById('tbl-container');
+            if (el && typeof filterTbl === 'function') {
+              el.innerHTML = filterTbl(rows, false, false, true);
+            }
+
+            // Update header count
+            try {
+              var hdr = document.querySelector('#main .page-hdr .page-sub');
+              if (hdr) hdr.textContent = String(rows.length) + ' concern(s) submitted';
+            } catch (e) {}
+
+            // Optionally update local cache
+            try {
+              TICKETS = rows;
+              saveTickets();
+            } catch (e) {}
+          })
+          .catch(function () {
+            // ignore backend errors; keep local tickets
+          });
+      }, 0);
+    }
+  } catch (e) {}
+
+  return `<div>
+    <div class="page-hdr">
+      <div>
+        <div class="page-title">My Tickets</div>
+        <div class="page-sub">${my.length} concern(s) submitted</div>
+      </div>
+    </div>
+    <div class="card">
+      ${buildFilterBar('s-tickets', false, false)}
+      <div id="tbl-container">${filterTbl(my, false, false, true)}</div>
+    </div>
+  </div>`;
 }
 
 function renderNotifs() {
