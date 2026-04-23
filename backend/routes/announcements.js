@@ -1,7 +1,7 @@
 // Announcements routes
 const express = require('express');
 const router = express.Router();
-const { supabase } = require('../config/supabase');
+const { supabase, supabaseAdmin } = require('../config/supabase');
 const { verifyToken } = require('../middleware/auth');
 
 // Get all announcements (include per-user read flag when authenticated)
@@ -25,10 +25,20 @@ router.get('/', async (req, res) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         const userId = decoded && (decoded.userId || decoded.user_id || decoded.sub);
         if (userId) {
-          const { data: reads, error: readErr } = await supabase
-            .from('announcement_reads')
-            .select('announcement_id')
-            .eq('user_id', userId);
+          // Use the service-role (admin) client for announcement_reads so RLS doesn't block
+          if (!supabaseAdmin) {
+            // If admin client is not configured, skip per-user annotation silently (don't crash the public GET)
+            console.warn('supabaseAdmin not configured; skipping announcement_reads annotation');
+          } else {
+            const { data: reads, error: readErr } = await supabaseAdmin
+              .from('announcement_reads')
+              .select('announcement_id')
+              .eq('user_id', userId);
+            if (readErr) throw readErr;
+            const readSet = new Set((reads || []).map((r) => String(r.announcement_id)));
+            const annotated = (announcements || []).map((a) => ({ ...a, is_read: readSet.has(String(a.id)) }));
+            return res.json(annotated);
+          }
           if (readErr) throw readErr;
           const readSet = new Set((reads || []).map((r) => String(r.announcement_id)));
           const annotated = (announcements || []).map((a) => ({ ...a, is_read: readSet.has(String(a.id)) }));
@@ -68,7 +78,13 @@ router.post('/:announcementId/read', verifyToken, async (req, res) => {
       read_at: new Date().toISOString()
     };
 
-    const { data, error } = await supabase
+    // Require the service-role (admin) client to perform the upsert because RLS will block anon clients
+    if (!supabaseAdmin) {
+      console.error('SUPABASE_SERVICE_ROLE_KEY not configured; cannot upsert announcement_reads');
+      return res.status(500).json({ error: 'Server misconfiguration: SUPABASE_SERVICE_ROLE_KEY not set' });
+    }
+
+    const { data, error } = await supabaseAdmin
       .from('announcement_reads')
       .upsert([payload], { onConflict: ['announcement_id', 'user_id'] })
       .select();

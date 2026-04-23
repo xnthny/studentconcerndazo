@@ -67,16 +67,53 @@ function renderStudentDash() {
     const audience = String(a.audience || 'All Users');
     return audience === 'All Users' || audience === 'Students Only';
   });
+  // If backend tickets are available, fetch and update the dashboard after DOM renders
+  try {
+    if (typeof apiGetUserTickets === 'function' && currentUser && currentUser.id) {
+      setTimeout(function () {
+        apiGetUserTickets(currentUser.id)
+          .then(function (rows) {
+            if (!Array.isArray(rows)) return;
+
+            // Update stat cards
+            try {
+              var total = rows.length;
+              var pending = rows.filter((t) => t.status === 'Pending').length;
+              var inprog = rows.filter((t) => t.status === 'In Progress').length;
+              var resolved = rows.filter((t) => t.status === 'Resolved').length;
+              var elTotal = document.getElementById('dash-total'); if (elTotal) elTotal.textContent = String(total);
+              var elPending = document.getElementById('dash-pending'); if (elPending) elPending.textContent = String(pending);
+              var elInprog = document.getElementById('dash-inprogress'); if (elInprog) elInprog.textContent = String(inprog);
+              var elResolved = document.getElementById('dash-resolved'); if (elResolved) elResolved.textContent = String(resolved);
+            } catch (e) {}
+
+            // Update recent tickets block
+            try {
+              var recentEl = document.getElementById('dash-recent-tickets');
+              if (recentEl && typeof tbl === 'function') {
+                recentEl.innerHTML = rows.length ? tbl(rows.slice(0, 3), false, false) : `<div class="empty-state">${IC.list}<p>No tickets yet. <a onclick="showPage('s-submit')" style="color:var(--cg-dark);cursor:pointer;font-weight:600;">Submit your first concern</a></p></div>`;
+              }
+            } catch (e) {}
+
+            // Update local cache
+            try { TICKETS = rows; saveTickets(); } catch (e) {}
+          })
+          .catch(function () {
+            // ignore backend errors; keep local tickets
+          });
+      }, 0);
+    }
+  } catch (e) {}
   return `<div>
   <div class="page-hdr"><div><div class="page-title">My Dashboard</div><div class="page-sub">Welcome back, ${currentUser.name}!</div></div><div style="display:flex;gap:8px;"><button class="btn btn-primary" onclick="showPage('s-submit')">${IC.plus} New Concern</button></div></div>
-  <div class="stats-grid">
-    <div class="stat-card"><div class="stat-top-bar"></div><div class="stat-icon" style="background:var(--cg-pale);color:var(--cg);">${IC.list}</div><div class="stat-label">Total Concerns</div><div class="stat-val">${my.length}</div><div class="stat-sub">This semester</div></div>
-    <div class="stat-card"><div class="stat-top-bar" style="background:#f59e0b;"></div><div class="stat-icon" style="background:#fffbeb;color:#f59e0b;">${IC.bell}</div><div class="stat-label">Pending</div><div class="stat-val" style="color:#92600a;">${p}</div></div>
-    <div class="stat-card"><div class="stat-top-bar" style="background:var(--blue);"></div><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue);">${IC.chart}</div><div class="stat-label">In Progress</div><div class="stat-val" style="color:var(--blue);">${ip}</div></div>
-    <div class="stat-card"><div class="stat-top-bar"></div><div class="stat-icon" style="background:var(--cg-pale);color:var(--cg);">${IC.check}</div><div class="stat-label">Resolved</div><div class="stat-val" style="color:var(--cg-dark);">${r}</div></div>
+    <div class="stats-grid">
+    <div class="stat-card"><div class="stat-top-bar"></div><div class="stat-icon" style="background:var(--cg-pale);color:var(--cg);">${IC.list}</div><div class="stat-label">Total Concerns</div><div class="stat-val" id="dash-total">${my.length}</div><div class="stat-sub">This semester</div></div>
+    <div class="stat-card"><div class="stat-top-bar" style="background:#f59e0b;"></div><div class="stat-icon" style="background:#fffbeb;color:#f59e0b;">${IC.bell}</div><div class="stat-label">Pending</div><div class="stat-val" id="dash-pending" style="color:#92600a;">${p}</div></div>
+    <div class="stat-card"><div class="stat-top-bar" style="background:var(--blue);"></div><div class="stat-icon" style="background:var(--blue-bg);color:var(--blue);">${IC.chart}</div><div class="stat-label">In Progress</div><div class="stat-val" id="dash-inprogress" style="color:var(--blue);">${ip}</div></div>
+    <div class="stat-card"><div class="stat-top-bar"></div><div class="stat-icon" style="background:var(--cg-pale);color:var(--cg);">${IC.check}</div><div class="stat-label">Resolved</div><div class="stat-val" id="dash-resolved" style="color:var(--cg-dark);">${r}</div></div>
   </div>
   <div class="two-col">
-    <div><div class="card"><div class="card-hdr"><div class="card-title">Recent Tickets</div><button class="btn btn-sm" onclick="showPage('s-tickets')">View all</button></div>${my.length ? tbl(my.slice(0, 3), false, false) : `<div class="empty-state">${IC.list}<p>No tickets yet. <a onclick="showPage('s-submit')" style="color:var(--cg-dark);cursor:pointer;font-weight:600;">Submit your first concern</a></p></div>`}</div></div>
+    <div><div class="card"><div class="card-hdr"><div class="card-title">Recent Tickets</div><button class="btn btn-sm" onclick="showPage('s-tickets')">View all</button></div><div id="dash-recent-tickets">${my.length ? tbl(my.slice(0, 3), false, false) : `<div class="empty-state">${IC.list}<p>No tickets yet. <a onclick="showPage('s-submit')" style="color:var(--cg-dark);cursor:pointer;font-weight:600;">Submit your first concern</a></p></div>`}</div></div></div>
     <div><div class="card"><div class="card-title">Announcements</div>${visibleAnnouncements.length ? visibleAnnouncements.map((a) => `<div class="ann-item" onclick="markAnnouncementReadAndOpen('${a.id}')" style="cursor:pointer;transition:background .12s;" onmouseover="this.style.background='var(--n50)'" onmouseout="this.style.background='transparent'"><div class="ann-dot" style="background:${a.read ? 'var(--n300)' : 'var(--cg)'}"></div><div><div class="ann-title">${a.title}</div><div class="ann-body">${a.body}</div><div class="ann-date">${a.date}</div></div></div>`).join('') : `<div style="color:var(--n400);font-size:12px;padding:12px 0;">No announcements for students.</div>`}</div></div>
   </div></div>`;
 }
