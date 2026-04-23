@@ -29,19 +29,23 @@ router.post('/', verifyToken, async (req, res) => {
       return res.status(403).json({ error: 'Only admins can create announcements' });
     }
 
-    const { title, message, audience, isDraft } = req.body;
+    // Accept either `body` (preferred) or legacy `message` from callers.
+    const { title, body, audience, isDraft } = req.body;
+    const resolvedBody = (typeof body === 'string' && body.trim()) ? body.trim() : (typeof req.body.message === 'string' ? String(req.body.message).trim() : '');
 
-    if (!title || !message) {
-      return res.status(400).json({ error: 'Title and message are required' });
+    if (!title || !resolvedBody) {
+      return res.status(400).json({ error: 'Title and body are required' });
     }
 
-    // Insert announcement. Do not assume a `created_by` column exists in the table;
-    // keep the insert to the safe, commonly present columns only.
+    // Use the authenticated user's id as author_id when available
+    const authorId = (req.user && req.user.userId) ? req.user.userId : null;
+
     const insertPayload = {
-      title,
-      message,
+      title: String(title).trim(),
+      body: resolvedBody,
       audience: audience || 'All Users',
-      is_draft: isDraft || false,
+      is_draft: Boolean(isDraft),
+      author_id: authorId,
       created_at: new Date().toISOString()
     };
 

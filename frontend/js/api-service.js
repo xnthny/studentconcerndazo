@@ -507,10 +507,10 @@ async function apiGetAnnouncements() {
   return response;
 }
 
-async function apiCreateAnnouncement(title, message, audience = 'All Users', isDraft = false) {
+async function apiCreateAnnouncement(title, body, audience = 'All Users', isDraft = false) {
   const response = await apiCall('/announcements', {
     method: 'POST',
-    body: { title, message, audience, isDraft }
+    body: { title, body, audience, isDraft }
   });
   return response;
 }

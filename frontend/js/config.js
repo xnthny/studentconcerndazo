@@ -797,12 +797,12 @@ function loadAnnouncements() {
           if (!Array.isArray(data)) return;
 
           // Map backend fields to the frontend shape used elsewhere in the app.
-          // Backend returns: { id, title, message, audience, created_at, is_draft }
+          // Backend returns: { id, title, body, audience, created_at, is_draft, author_id }
           const mapped = data.map(function (item) {
             return {
               id: item.id,
               title: item.title || '',
-              body: item.message || item.body || '',
+              body: item.body || item.message || '',
               audience: item.audience || 'All Users',
               // Format created_at into a readable date similar to existing local entries
               date: item.created_at ? (function () { try { return new Date(item.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); } catch (e) { return String(item.created_at || ''); } })() : (item.date || ''),
