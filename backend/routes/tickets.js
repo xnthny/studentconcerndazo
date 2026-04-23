@@ -26,30 +26,44 @@ router.get('/user/:userId', verifyToken, async (req, res) => {
   try {
     const { userId } = req.params;
 
-    // Try querying by `user_id` (preferred). If the column doesn't exist in the
-    // tickets table (older schema uses `student_id`), fall back to `student_id`.
-    const primary = await supabase
-      .from('tickets')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    // If the incoming userId is not a UUID (e.g. a student number like "22210772"),
+    // first resolve it to the user's UUID via the `users.student_id` column,
+    // then query `tickets.student_id` using that UUID. This avoids comparing a
+    // text student number against a UUID column on tickets.
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-    if (primary.error) {
-      const msg = String(primary.error.message || primary.error || '');
-      if (/column .*user_id .*does not exist/i.test(msg) || /tickets\.user_id/i.test(msg)) {
-        // Fallback to student_id when tickets.user_id is not present in DB
-        const fallback = await supabase
-          .from('tickets')
-          .select('*')
-          .eq('student_id', userId)
-          .order('created_at', { ascending: false });
-        if (fallback.error) throw fallback.error;
-        return res.json(fallback.data || []);
+    let studentUuid = userId;
+
+    if (!uuidRegex.test(String(userId || '')) ) {
+      // Looks like a student number / textual id — try to find the user's UUID
+      const { data: userRow, error: userErr } = await supabase
+        .from('users')
+        .select('id')
+        .eq('student_id', userId)
+        .single();
+
+      if (userErr) {
+        const msg = String(userErr.message || userErr || '');
+        // No matching user -> return empty list instead of attempting UUID compares
+        if (/no rows|0 rows|not found/i.test(msg)) {
+          return res.json([]);
+        }
+        throw userErr;
       }
-      throw primary.error;
+
+      if (!userRow || !userRow.id) return res.json([]);
+      studentUuid = userRow.id;
     }
 
-    res.json(primary.data || []);
+    const { data: tickets, error } = await supabase
+      .from('tickets')
+      .select('*, student:users(full_name, email, course, year_level)')
+      .eq('student_id', studentUuid)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    res.json(tickets || []);
   } catch (error) {
     console.error('Get user tickets error:', error);
     res.status(500).json({ error: 'Failed to fetch tickets', message: error.message });
