@@ -394,10 +394,131 @@ function doLogin() {
     return;
   }
 
-  // Try backend API first
+  // Try backend API first using backendRequest helper, fallback to local auth
+  if (typeof backendRequest === 'function') {
+    backendRequest('/auth/login', { method: 'POST', body: { username: accountKey, password: pw } })
+      .then((response) => {
+        if (typeof isDeletedUserRecord === 'function' && isDeletedUserRecord(response.user, uname)) {
+          errEl.style.display = 'block';
+          errEl.textContent = '✕ This account has been permanently deleted.';
+          document.getElementById('login-pw').value = '';
+          if (typeof apiLogout !== 'undefined') {
+            apiLogout();
+          }
+          return;
+        }
+
+        errEl.style.display = 'none';
+        currentRole = response.user.role;
+        if (currentRole === 'faculty') {
+          currentRole = 'registrar';
+          response.user.role = 'registrar';
+        }
+        if (currentRole === 'student') {
+          try {
+            if (typeof loadUsers === 'function') {
+              loadUsers();
+            }
+
+            const loginKey = String(uname || '').toLowerCase();
+            const backendId = String(response.user.student_id || response.user.id || '');
+            const userInList = USERS.find((u) => {
+              const byId = backendId && String(u.id || '') === backendId;
+              const byUname = loginKey && String(u.uname || '').toLowerCase() === loginKey;
+              return byId || byUname;
+            });
+
+            if (userInList) {
+              response.user.full_name = userInList.name || response.user.full_name;
+              response.user.name = userInList.name || response.user.name;
+              response.user.email = userInList.email || response.user.email || '';
+              response.user.course = userInList.course || response.user.course || '';
+              response.user.year_level = userInList.year || response.user.year_level || response.user.year || '';
+              response.user.year = response.user.year_level;
+              response.user.id = userInList.id || response.user.id;
+              response.user.student_id = userInList.id || response.user.student_id || response.user.id;
+            }
+
+            if (loginKey) {
+              const existing = ACCOUNTS[loginKey] || {};
+              ACCOUNTS[loginKey] = {
+                ...existing,
+                password: existing.password || pw,
+                role: 'student',
+                name: response.user.full_name || response.user.name || existing.name || 'Student',
+                id: response.user.student_id || response.user.id || existing.id || loginKey,
+                ini: existing.ini || ((response.user.full_name || response.user.name || 'S').split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase() || 'ST'),
+                bg: existing.bg || 'rgba(26,162,96,0.2)',
+                col: existing.col || '#1AA260',
+                isNew: !!existing.isNew,
+                course: response.user.course || existing.course || '',
+                year: response.user.year_level || response.user.year || existing.year || '',
+                email: response.user.email || existing.email || ''
+              };
+
+              if (typeof saveStudentRegistration === 'function') {
+                saveStudentRegistration(loginKey, ACCOUNTS[loginKey]);
+              }
+            }
+          } catch (e) {
+            console.error('Student profile sync failed during backend login:', e);
+          }
+        }
+
+        currentUser = { ...response.user, username: accountKey, uname: accountKey };
+        setUserActiveSession(accountKey, response.user);
+
+        // Save session to localStorage
+        try {
+          if (response.token) localStorage.setItem('authToken', response.token);
+          localStorage.setItem('currentUser', JSON.stringify(response.user));
+        } catch (e) {
+          console.error('Failed to persist session:', e);
+        }
+
+        // Update shared presence so admin can see active state across browsers.
+        if (typeof apiSetPresence === 'function') {
+          apiSetPresence(true).catch((e) => console.log('Presence update skipped:', e.message));
+        }
+        startPresenceHeartbeat();
+
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('app-screen').style.display = 'block';
+        document.getElementById('tb-username').textContent = currentUser.full_name || currentUser.name;
+        updateTopbarAvatar();
+        document.getElementById('role-pill').textContent = {
+          student: 'Student',
+          accounting: 'Accounting',
+          registrar: 'Registrar',
+          admin: 'Admin'
+        }[response.user.role];
+        buildSidebar();
+        activeFilter = 'All';
+        searchQuery = '';
+        showPage(NAVS[currentRole][0].id);
+
+        // For admin, sync Users page from backend (Supabase) when available.
+        if (response.user.role === 'admin' && typeof syncUsersFromBackend === 'function') {
+          syncUsersFromBackend().then((changed) => {
+            if (changed && currentPageId === 'ad-users') {
+              showPage('ad-users');
+            }
+          });
+        }
+      })
+      .catch((error) => {
+        // Fallback to local authentication when backend is unreachable or errors
+        console.warn('Backend login failed, falling back to local auth:', error && error.message ? error.message : error);
+        doLoginLocal(accountKey, pw, errEl);
+      });
+    return;
+  }
+
+  // If backendRequest helper not available, fallback to existing apiLogin or local auth
   if (typeof apiLogin !== 'undefined') {
     apiLogin(accountKey, pw)
       .then((response) => {
+        // reuse existing success handling (delegate to original flow)
         if (typeof isDeletedUserRecord === 'function' && isDeletedUserRecord(response.user, uname)) {
           errEl.style.display = 'block';
           errEl.textContent = '✕ This account has been permanently deleted.';

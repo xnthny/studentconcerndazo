@@ -1,5 +1,82 @@
 // API module - API calls and form handlers
 
+// Backend connection base (live Render deployment)
+const BACKEND_BASE = 'https://studentconcerndazo.onrender.com/api';
+
+// Reusable helper to call backend endpoints. Automatically attaches Authorization header
+// from `localStorage.authToken` when present. Returns parsed JSON or throws on HTTP error.
+function backendRequest(path, options) {
+  options = options || {};
+  var base = String(BACKEND_BASE || '').replace(/\/+$/, '');
+  var ep = String(path || '').replace(/^\/+/, '');
+  var url = base + '/' + ep;
+
+  var headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+  try {
+    var token = localStorage.getItem('authToken');
+    if (token) {
+      headers['Authorization'] = 'Bearer ' + token;
+    }
+  } catch (e) {
+    // ignore localStorage errors
+  }
+
+  var fetchOpts = {
+    method: options.method || 'GET',
+    headers: headers
+  };
+
+  if (options.body !== undefined && options.body !== null) {
+    // If body is already a FormData or a string, pass through; otherwise JSON.stringify
+    if (typeof FormData !== 'undefined' && options.body instanceof FormData) {
+      // remove JSON content-type for FormData
+      delete fetchOpts.headers['Content-Type'];
+      fetchOpts.body = options.body;
+    } else if (typeof options.body === 'string') {
+      fetchOpts.body = options.body;
+    } else {
+      try {
+        fetchOpts.body = JSON.stringify(options.body);
+      } catch (e) {
+        fetchOpts.body = options.body;
+      }
+    }
+  }
+
+  return fetch(url, fetchOpts).then(function (res) {
+    return res.text().then(function (text) {
+      var data = null;
+      if (text) {
+        try {
+          data = JSON.parse(text);
+        } catch (e) {
+          data = text;
+        }
+      }
+      if (!res.ok) {
+        var err = new Error((data && (data.message || data.error)) || ('HTTP ' + res.status));
+        err.status = res.status;
+        err.body = data;
+        throw err;
+      }
+      return data;
+    });
+  });
+}
+
+// Simple health-check helper for server /api/health. Returns {ok:true,data} or {ok:false,error}.
+function backendHealthCheck() {
+  return backendRequest('/health', { method: 'GET' })
+    .then(function (data) { return { ok: true, data: data }; })
+    .catch(function (err) { return { ok: false, error: err && err.message ? err.message : String(err) }; });
+}
+
+// Expose helpers globally for quick use elsewhere (guard for non-browser environments)
+if (typeof window !== 'undefined' && window) {
+  window.backendRequest = backendRequest;
+  window.backendHealthCheck = backendHealthCheck;
+}
+
 var pendingConcernFiles = [];
 
 function triggerConcernFilePicker() {
@@ -38,11 +115,11 @@ function renderConcernSelectedFiles() {
     return;
   }
   el.innerHTML = pendingConcernFiles.map(function(f, i) {
-    return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--n100);">' +
-      '<span style="flex:1;font-size:13px;color:var(--n600);">' + f.name + '</span>' +
-      '<span style="font-size:11px;color:var(--n400);">' + formatConcernFileSize(f.size) + '</span>' +
-      '<button onclick="removeConcernSelectedFile(' + i + ')" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:18px;line-height:1;padding:0 4px;">&times;</button>' +
-      '</div>';
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--n100);">
+      <span style="flex:1;font-size:13px;color:var(--n600);">${f.name}</span>
+      <span style="font-size:11px;color:var(--n400);">${formatConcernFileSize(f.size)}</span>
+      <button onclick="removeConcernSelectedFile(${i})" style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:18px;line-height:1;padding:0 4px;">&times;</button>
+    </div>`;
   }).join('');
 }
 
@@ -187,14 +264,33 @@ function submitConcern() {
   saveTickets();
   pendingConcernFiles = [];
 
-  // Also try backend API (optional)
-  if (typeof apiSubmitTicket !== 'undefined') {
-    apiSubmitTicket(dept, subj, detail, cat)
-      .then((response) => {
+  // Also try backend API (optional) — prefer local helper that uses this file's BACKEND_BASE
+  if (typeof backendRequest === 'function') {
+    backendRequest('/tickets', {
+      method: 'POST',
+      body: {
+        student_id: currentUser.id,
+        department: dept,
+        subject: subj,
+        details: detail,
+        category: cat || dept,
+        status: 'Pending'
+      }
+    })
+      .then(function (response) {
         console.log('Ticket synced with backend');
       })
-      .catch((error) => {
-        console.log('Backend sync failed, using local storage:', error.message);
+      .catch(function (error) {
+        console.log('Backend sync failed, using local storage:', error && error.message ? error.message : error);
+      });
+  } else if (typeof apiSubmitTicket !== 'undefined') {
+    // Fallback to existing helper when backendRequest isn't available
+    apiSubmitTicket(dept, subj, detail, cat)
+      .then(function (response) {
+        console.log('Ticket synced with backend');
+      })
+      .catch(function (error) {
+        console.log('Backend sync failed, using local storage:', error && error.message ? error.message : error);
       });
   }
 
