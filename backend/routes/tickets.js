@@ -113,10 +113,32 @@ router.post('/', verifyToken, async (req, res) => {
       studentUuid = req.user?.userId;
     }
 
+    // Generate a human-friendly ticket number like TKT-001, TKT-002.
+    // Strategy: fetch the most recently created ticket's `ticket_number`,
+    // parse its numeric suffix and increment. If none found or parse fails,
+    // start at 1. This is a minimal change that keeps numbering readable.
+    const { data: lastTickets, error: lastErr } = await supabase
+      .from('tickets')
+      .select('ticket_number')
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (lastErr) console.warn('Could not read last ticket_number:', lastErr.message || lastErr);
+
+    let nextSeq = 1;
+    if (Array.isArray(lastTickets) && lastTickets.length) {
+      const lastNum = lastTickets[0] && lastTickets[0].ticket_number;
+      const m = lastNum ? String(lastNum).match(/(\d+)$/) : null;
+      if (m) nextSeq = parseInt(m[1], 10) + 1;
+    }
+
+    const ticketNumber = 'TKT-' + String(nextSeq).padStart(3, '0');
+
     const { data: newTicket, error } = await supabase
       .from('tickets')
       .insert([
         {
+          ticket_number: ticketNumber,
           student_id: studentUuid,
           subject,
           details,
