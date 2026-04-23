@@ -564,6 +564,7 @@ async function markAnnouncementReadAndOpen(announcementId) {
       ANNOUNCEMENTS[idx].is_read = true;
       ANNOUNCEMENTS[idx].read = true;
       try { saveAnnouncements(); } catch (e) {}
+      try { if (typeof buildSidebar === 'function') buildSidebar(); } catch (e) {}
     }
   } catch (e) {}
 

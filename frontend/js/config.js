@@ -824,6 +824,7 @@ function loadAnnouncements() {
               annListEl.innerHTML = renderAnnList();
             }
             if (typeof updateAnnouncementPublishedCount === 'function') updateAnnouncementPublishedCount();
+            try { if (typeof buildSidebar === 'function') buildSidebar(); } catch (e) {}
           } catch (e) {
             // Non-fatal UI refresh error; continue silently.
             console.warn('Failed to refresh announcements UI after fetch:', e);
