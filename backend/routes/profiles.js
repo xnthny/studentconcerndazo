@@ -30,8 +30,23 @@ router.patch('/:userId', verifyToken, async (req, res) => {
     const { userId } = req.params;
     const { full_name, email, course, year_level } = req.body;
 
+    // Resolve numeric student number (e.g. 22210772) to internal UUID if needed
+    let targetUserId = userId;
+    if (/^[0-9]+$/.test(String(userId || ''))) {
+      const { data: found, error: findErr } = await supabase
+        .from('users')
+        .select('id')
+        .eq('student_id', userId)
+        .limit(1);
+      if (findErr) throw findErr;
+      if (!found || found.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      targetUserId = found[0].id;
+    }
+
     // Users can only update their own profile unless they're admin
-    if (req.user.userId !== userId && req.user.role !== 'admin') {
+    if (req.user.userId !== targetUserId && req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
@@ -44,7 +59,7 @@ router.patch('/:userId', verifyToken, async (req, res) => {
         year_level,
         updated_at: new Date().toISOString()
       })
-      .eq('id', userId)
+      .eq('id', targetUserId)
       .select()
       .single();
 

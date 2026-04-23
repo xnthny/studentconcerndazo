@@ -599,11 +599,10 @@ function renderProfile() {
   const photo = (typeof getProfilePhotoByIdentity === 'function') ? getProfilePhotoByIdentity(u) : profilePhotos[u.id];
   const roleLabels = { student: 'Student', accounting: 'Accounting Staff', registrar: 'Registrar Staff', admin: 'System Administrator' };
   const roleColors = { student: 'var(--cg)', accounting: 'var(--blue)', registrar: '#d97706', admin: '#7c3aed' };
-  const my = currentRole === 'student' ? TICKETS.filter((t) => t.student === u.name) : [];
+  const my = currentRole === 'student' ? TICKETS.filter((t) => isCurrentStudentTicket(t)) : [];
   const hasUuidId = u.id && u.id.includes('-') && u.id.length === 36; // Check if UUID format
   return `<div>
   <div class="page-hdr"><div><div class="page-title">My Profile</div><div class="page-sub">Manage your personal information and photo</div></div></div>
-  ${hasUuidId ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;padding:12px 14px;background:#fef3c7;border:1px solid #fcd34d;border-radius:var(--radius);color:#7c2d12;"><span style="font-size:18px;">⚠️</span><div><strong>Complete Your Profile</strong><br/><span style="font-size:12px;margin-top:4px;display:block;">Your Student ID is currently a system identifier. Please replace it with your actual numeric Student ID (e.g., 21210747) below.</span></div></div>` : ''}
   <div class="two-col">
     <div>
       <div class="card" style="text-align:center;padding:32px 24px;">
@@ -615,6 +614,7 @@ function renderProfile() {
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>
           </label>
           <input type="file" id="photo-upload" accept="image/*" style="display:none;" onchange="handlePhotoUpload(event)"/>
+          <div id="photo-save-note" style="font-size:12px;color:var(--n500);margin-top:8px;">Photos saved locally (not uploaded automatically)</div>
         </div>
         <div style="font-size:20px;font-weight:800;color:var(--n800);letter-spacing:-0.3px;">${u.name}</div>
         <div style="margin-top:6px;"><span style="display:inline-block;padding:3px 14px;border-radius:20px;font-size:11px;font-weight:700;background:${roleColors[currentRole]}22;color:${roleColors[currentRole]};border:1px solid ${roleColors[currentRole]}44;">${roleLabels[currentRole] || currentRole}</span></div>
@@ -626,7 +626,7 @@ function renderProfile() {
         <div class="fg"><label class="fl">Full Name</label><input class="fi" id="prof-name" value="${u.name}"/></div>
         <div class="fg"><label class="fl">Email Address</label><input class="fi" id="prof-email" type="email" value="${u.email || ''}" placeholder="your@email.com"/></div>
         ${currentRole === 'student' ? `
-        <div class="fg"><label class="fl">Student ID Number *</label><input class="fi" id="prof-sid" type="text" value="${u.id || ''}" placeholder="e.g., 21210747" style="background:${u.id && u.id.includes('-') ? '#fff3cd' : '#f0fdf4'};"/></div>
+        <div class="fg"><label class="fl">Student ID</label><input class="fi" id="prof-sid" type="text" value="${u.id || ''}" placeholder="e.g., 21210747" readonly style="background:${u.id && u.id.includes('-') ? '#fff3cd' : '#f0fdf4'};"/></div>
         <div class="form-row">
           <div class="fg"><label class="fl">Course / Program</label>
             <select class="fi" id="prof-course">
@@ -642,6 +642,10 @@ function renderProfile() {
         <div class="fg"><label class="fl">New Password <span style="font-weight:400;color:var(--n300);">(leave blank to keep current)</span></label>
           <div class="pw-wrap"><input class="fi" type="password" id="prof-pw" placeholder="Enter new password"/><button class="pw-eye" onclick="togglePw('prof-pw')" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         </div>
+        ${currentRole === 'student' ? `
+        <div class="fg"><label class="fl">Confirm Password</label>
+          <div class="pw-wrap"><input class="fi" type="password" id="prof-pw-confirm" placeholder="Confirm new password"/><button class="pw-eye" onclick="togglePw('prof-pw-confirm')" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
+        </div>` : ''}
         <button class="btn btn-primary" onclick="saveProfile()">Save Changes</button>
       </div>
     </div>
@@ -649,7 +653,7 @@ function renderProfile() {
       <div class="card">
         <div class="card-title">Account Details</div>
         <table class="info-tbl">
-          <tr><td>ID / Employee No.</td><td style="font-weight:700;color:var(--cg-dark);">${u.id}</td></tr>
+          <tr><td>${currentRole === 'student' ? 'Student ID' : 'ID / Employee No.'}</td><td style="font-weight:700;color:var(--cg-dark);">${u.id}</td></tr>
           <tr><td>Role</td><td>${roleLabels[currentRole] || currentRole}</td></tr>
           <tr><td>Status</td><td><span class="badge badge-resolved">Active</span></td></tr>
           ${u.course ? `<tr><td>Course</td><td>${u.course}</td></tr>` : ''}
@@ -771,20 +775,32 @@ function handlePhotoUpload(event) {
         
         profilePhotos[currentUser.id] = compressedData;
         
-        // Try to save to localStorage  
+        // Try to save to localStorage (if supported). Update a small note element
+        // so users aren't misled into thinking photos are uploaded to the server.
+        let savedFlag = false;
         if (typeof saveProfilePhotos === 'function') {
-          const saved = saveProfilePhotos();
-          
-          if (saved) {
-            const sizeKb = Math.round(compressedData.length / 1024);
+          try {
+            savedFlag = saveProfilePhotos();
+          } catch (e) {
+            savedFlag = false;
+          }
+          const sizeKb = Math.round(compressedData.length / 1024);
+          if (savedFlag) {
             toast(`✓ Photo saved! (${sizeKb} KB)`);
             console.log('✓ Photo saved successfully');
           } else {
-            // localStorage is full - but photo is stored in memory for this session
-            const sizeKb = Math.round(compressedData.length / 1024);
             toast(`✓ Photo loaded! (${sizeKb} KB - won't persist on refresh)`);
-            console.log('⚠ Photo in memory only - localStorage is full');
+            console.log('⚠ Photo in memory only - localStorage is full or save skipped');
           }
+        } else {
+          const sizeKb = Math.round(compressedData.length / 1024);
+          toast(`✓ Photo loaded! (${sizeKb} KB - stored in memory only)`);
+          savedFlag = false;
+        }
+
+        const noteEl = document.getElementById('photo-save-note');
+        if (noteEl) {
+          noteEl.textContent = savedFlag ? 'Photo saved to browser storage (local only).' : "Photo stored in memory only (won't persist on refresh).";
         }
         
         // Update avatar display immediately (works whether saved or not)
@@ -880,10 +896,12 @@ function saveProfile() {
   const name = document.getElementById('prof-name')?.value?.trim();
   const email = document.getElementById('prof-email')?.value?.trim();
   const pw = document.getElementById('prof-pw')?.value;
+  const pwConfirm = document.getElementById('prof-pw-confirm')?.value;
   let studentId = null;
   if (document.getElementById('prof-sid')) {
     studentId = document.getElementById('prof-sid')?.value?.trim();
   }
+
   if (!name) {
     toast('Name cannot be empty', 'error');
     return;
@@ -892,75 +910,76 @@ function saveProfile() {
     toast('Student ID must be numeric (e.g., 21210747)', 'error');
     return;
   }
+
   const oldName = currentUser.name;
   const oldId = currentUser.id;
-  const oldAccountKey = oldId.toLowerCase();
-  const newAccountKey = studentId ? studentId.toLowerCase() : oldAccountKey;
-  
-  // Update currentUser object
+
+  // Students cannot change their Student ID from this page.
+  if (currentRole === 'student') {
+    studentId = oldId;
+  }
+
+  // Update currentUser fields (do not change ID for students)
   currentUser.name = name;
   currentUser.email = email || '';
-  if (studentId && studentId !== oldId) {
-    // Migrate profile photo to new ID if it exists
-    if (profilePhotos[oldId] && typeof migrateProfilePhoto === 'function') {
-      migrateProfilePhoto(oldId, studentId);
-    }
+  if (currentRole !== 'student' && studentId && studentId !== oldId) {
     currentUser.id = studentId;
   }
   if (document.getElementById('prof-course')) currentUser.course = document.getElementById('prof-course').value;
   if (document.getElementById('prof-year')) currentUser.year = document.getElementById('prof-year').value;
+
+  // Handle password: keep confirm validation, but don't change student passwords here.
   if (pw) {
     if (pw.length < 6) {
       toast('Password must be at least 6 characters', 'error');
       return;
     }
-    currentUser.password = pw;
+    if (document.getElementById('prof-pw-confirm') && pw !== pwConfirm) {
+      toast('Passwords do not match', 'error');
+      return;
+    }
+    if (currentRole === 'student') {
+      // Password-change endpoint is not connected for students; do not persist locally.
+      toast('Password change is not connected yet. Your password was not updated.', 'error');
+    } else {
+      currentUser.password = pw;
+    }
   }
-  
-  // Update STUDENT_INFO lookup
+
+  // Update STUDENT_INFO lookup (keyed by name in this app)
   if (currentRole === 'student') {
-    delete STUDENT_INFO[oldName];
+    try { delete STUDENT_INFO[oldName]; } catch (e) {}
     STUDENT_INFO[name] = { course: currentUser.course || '', year: currentUser.year || '', email: email || '' };
   }
-  
-  // Update USERS array
+
+  // Update USERS array (match by oldId); do not mutate photo keys here.
   const ui = USERS.findIndex((u) => u.id === oldId);
   if (ui >= 0) {
     USERS[ui].name = name;
-    USERS[ui].id = currentUser.id;
     USERS[ui].email = email || '';
     if (currentUser.course) USERS[ui].course = currentUser.course;
     if (currentUser.year) USERS[ui].year = currentUser.year;
+    if (currentRole !== 'student' && currentUser.id !== oldId) {
+      USERS[ui].id = currentUser.id;
+    }
   }
-  
-  // Update ACCOUNTS and registeredStudents
+
+  // Update ACCOUNTS / registeredStudents without attempting photo migration.
   if (currentRole === 'student') {
-    const newAccountKey = studentId ? studentId.toLowerCase() : currentUser.id.toLowerCase();
-    const oldAccountKey = oldId.toLowerCase();
-    
-    // Create new account with all current data
-    ACCOUNTS[newAccountKey] = { ...currentUser };
-    
-    // Save to registeredStudents - ALWAYS pass oldAccountKey for cleanup
+    const acctKey = (currentUser.id || '').toLowerCase();
+    ACCOUNTS[acctKey] = { ...currentUser };
     if (typeof saveStudentRegistration === 'function') {
-      saveStudentRegistration(newAccountKey, ACCOUNTS[newAccountKey], oldAccountKey);
+      try { saveStudentRegistration(acctKey, ACCOUNTS[acctKey], acctKey); } catch (e) {}
     }
   } else {
-    const canonicalByRole = {
-      accounting: 'accounting.office',
-      registrar: 'registrar.office',
-      admin: 'admin'
-    };
+    const canonicalByRole = { accounting: 'accounting.office', registrar: 'registrar.office', admin: 'admin' };
     const canonicalKey = canonicalByRole[String(currentRole || '').toLowerCase()] || '';
     const providedKey = String(currentUser.username || currentUser.uname || '').toLowerCase();
     const idMatchedKeys = Object.keys(ACCOUNTS).filter((key) => String(ACCOUNTS[key]?.id || '') === String(currentUser.id || ''));
     const relatedKeys = Array.from(new Set([canonicalKey, providedKey, ...idMatchedKeys].filter(Boolean)));
 
-    // Keep all staff aliases in sync so old passwords cannot remain valid on stale keys.
     relatedKeys.forEach((key) => {
-      if (!ACCOUNTS[key]) {
-        return;
-      }
+      if (!ACCOUNTS[key]) return;
       ACCOUNTS[key] = {
         ...ACCOUNTS[key],
         ...currentUser,
@@ -979,51 +998,40 @@ function saveProfile() {
     }
 
     if (typeof saveStaffAccounts === 'function') {
-      saveStaffAccounts();
+      try { saveStaffAccounts(); } catch (e) {}
     }
-    try {
-      localStorage.setItem('accountsList', JSON.stringify(ACCOUNTS));
-    } catch (e) {
-      console.error('Failed to save legacy accounts list:', e);
-    }
+    try { localStorage.setItem('accountsList', JSON.stringify(ACCOUNTS)); } catch (e) { console.error('Failed to save legacy accounts list:', e); }
   }
-  
-  // Save all data to localStorage
-  localStorage.setItem('currentUser', JSON.stringify(currentUser));
+
+  // Persist currentUser and USERS
+  try { localStorage.setItem('currentUser', JSON.stringify(currentUser)); } catch (e) {}
   saveUsers();
 
-  // Keep backend profile in sync when API is available.
-  if (currentRole === 'student' && typeof apiUpdateProfile === 'function') {
-    apiUpdateProfile(oldId, {
+  // Sync to backend if available; surface errors to the user.
+  if (typeof apiUpdateProfile === 'function') {
+    const payload = {
       full_name: currentUser.name,
       email: currentUser.email || '',
       student_id: currentUser.id,
       course: currentUser.course || '',
       year_level: currentUser.year || ''
-    }).catch((e) => {
-      console.log('Backend profile sync skipped:', e.message);
+    };
+    apiUpdateProfile(oldId, payload).catch((e) => {
+      toast('Failed to sync profile to server: ' + (e && e.message ? e.message : 'Server error'), 'error');
+      console.error('Backend profile sync failed:', e);
     });
   }
-  
-  // Update UI elements immediately
-  document.getElementById('tb-username').textContent = name;
-  if (document.getElementById('tb-id')) {
-    document.getElementById('tb-id').textContent = currentUser.id;
-  }
-  // Update sidebar ID immediately
+
+  // Update UI
+  const tbUserEl = document.getElementById('tb-username');
+  if (tbUserEl) tbUserEl.textContent = name;
+  const tbIdEl = document.getElementById('tb-id');
+  if (tbIdEl) tbIdEl.textContent = currentUser.id;
   const sbUserIdEl = document.querySelector('.sb-user-id');
-  if (sbUserIdEl) {
-    sbUserIdEl.textContent = currentUser.id;
-  }
-  
-  // Show message if Student ID changed
-  if (studentId && studentId !== oldId) {
-    toast(`✓ Student ID updated to ${studentId}. Use it to log in next time.`, 'success');
-  } else {
-    toast('Profile saved successfully!');
-  }
-  
-  // Fully reload and re-render after a brief delay
+  if (sbUserIdEl) sbUserIdEl.textContent = currentUser.id;
+
+  toast('Profile saved successfully!');
+
   setTimeout(() => {
     loadUsers();
     buildSidebar();
