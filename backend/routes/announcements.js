@@ -4,9 +4,11 @@ const router = express.Router();
 const { supabase } = require('../config/supabase');
 const { verifyToken } = require('../middleware/auth');
 
-// Get all announcements
+// Get all announcements (include per-user read flag when authenticated)
+const jwt = require('jsonwebtoken');
 router.get('/', async (req, res) => {
   try {
+    // Fetch announcements
     const { data: announcements, error } = await supabase
       .from('announcements')
       .select('*')
@@ -15,10 +17,68 @@ router.get('/', async (req, res) => {
 
     if (error) throw error;
 
+    // If an Authorization token is present, try to decode it and attach per-user read flags
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.split(' ')[1];
+    if (token) {
+      try {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const userId = decoded && (decoded.userId || decoded.user_id || decoded.sub);
+        if (userId) {
+          const { data: reads, error: readErr } = await supabase
+            .from('announcement_reads')
+            .select('announcement_id')
+            .eq('user_id', userId);
+          if (readErr) throw readErr;
+          const readSet = new Set((reads || []).map((r) => String(r.announcement_id)));
+          const annotated = (announcements || []).map((a) => ({ ...a, is_read: readSet.has(String(a.id)) }));
+          return res.json(annotated);
+        }
+      } catch (e) {
+        // ignore token errors and return public announcements
+      }
+    }
+
     res.json(announcements);
   } catch (error) {
     console.error('Get announcements error:', error);
     res.status(500).json({ error: 'Failed to fetch announcements', message: error.message });
+  }
+});
+
+// Mark an announcement as read for the authenticated user
+router.post('/:announcementId/read', verifyToken, async (req, res) => {
+  try {
+    const { announcementId } = req.params;
+    const userId = req.user && (req.user.userId || req.user.user_id || req.user.sub);
+
+    if (!userId) {
+      return res.status(401).json({ error: 'Invalid user' });
+    }
+
+    // Validate announcement id looks like a UUID
+    const uuidRegex = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+    if (!uuidRegex.test(String(announcementId || ''))) {
+      return res.status(400).json({ error: 'Invalid announcement id' });
+    }
+
+    const payload = {
+      announcement_id: announcementId,
+      user_id: userId,
+      read_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('announcement_reads')
+      .upsert([payload], { onConflict: ['announcement_id', 'user_id'] })
+      .select();
+
+    if (error) throw error;
+
+    res.json({ ok: true });
+  } catch (error) {
+    console.error('Mark announcement read error:', error);
+    res.status(500).json({ error: 'Failed to mark announcement read', message: error.message });
   }
 });
 

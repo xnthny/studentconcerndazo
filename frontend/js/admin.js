@@ -682,24 +682,45 @@ function renderProfile() {
         <div style="font-size:12px;color:var(--n400);margin-top:6px;">${u.id}</div>
         ${photo ? `<button class="btn btn-xs" style="margin-top:10px;background:transparent;border:1px solid var(--n100);color:var(--n600);box-shadow:none;" onclick="removePhoto()">Remove photo</button>` : ''}
       </div>
-      <div class="card">
+        <div class="card">
         <div class="card-title">Edit Information</div>
+        ${currentRole === 'student' ? `
+        <div style="padding-top:6px;">
+          <div style="background:var(--cg-pale);border:1px solid var(--cg-pale2);padding:12px;border-radius:var(--radius);margin-bottom:12px;">
+            <div class="fg" style="margin-bottom:8px;"><label class="fl">Full Name</label><input class="fi" id="prof-name" value="${u.name}" readonly style="background:${u.id && u.id.includes('-') ? '#fff3cd' : '#f0fdf4'};"/></div>
+            <div class="fg" style="margin-bottom:8px;"><label class="fl">Email Address</label><input class="fi" id="prof-email" type="email" value="${u.email || ''}" placeholder="your@email.com" readonly style="background:${u.id && u.id.includes('-') ? '#fff3cd' : '#f0fdf4'};"/></div>
+            <div class="fg" style="margin-bottom:8px;"><label class="fl">Student ID</label><input class="fi" id="prof-sid" type="text" value="${u.id || ''}" placeholder="e.g., 21210747" readonly style="background:${u.id && u.id.includes('-') ? '#fff3cd' : '#f0fdf4'};"/></div>
+            <div class="form-row" style="gap:12px;">
+              <div class="fg" style="flex:1;margin-bottom:0;"><label class="fl">Course / Program</label>
+                <select class="fi" id="prof-course" disabled style="background:${u.id && u.id.includes('-') ? '#fff3cd' : '#f0fdf4'};">
+                  ${['BS Computer Science', 'BS Criminology', 'BSED', 'CBA', 'Electrical Engineering', 'Mechanical Engineering', 'COED', 'Hospital Management', 'Tourism Management'].map((c) => `<option${((u.course || '') === c) ? ' selected' : ''}>${c}</option>`).join('')}
+                </select>
+              </div>
+              <div class="fg" style="flex:1;margin-bottom:0;"><label class="fl">Year Level</label>
+                <select class="fi" id="prof-year" disabled style="background:${u.id && u.id.includes('-') ? '#fff3cd' : '#f0fdf4'};">
+                  ${['1st Year', '2nd Year', '3rd Year', '4th Year', 'Graduate'].map((y) => `<option${u.year === y ? ' selected' : ''}>${y}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;gap:12px;align-items:flex-start;margin-bottom:16px;">
+            <div style="width:20px;height:20px;flex-shrink:0;display:flex;align-items:center;justify-content:center;border-radius:6px;background:#f6fbf8;border:1px solid #dbeae2;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#2e7d4e" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+            </div>
+            <div style="font-size:13px;color:var(--cg-dark);line-height:1.35;">These details are registrar/admin-controlled. To request changes to your name, email, student ID, course, or year level, please contact the admin.</div>
+          </div>
+        </div>
+        ` : `
         <div class="fg"><label class="fl">Full Name</label><input class="fi" id="prof-name" value="${u.name}"/></div>
         <div class="fg"><label class="fl">Email Address</label><input class="fi" id="prof-email" type="email" value="${u.email || ''}" placeholder="your@email.com"/></div>
-        ${currentRole === 'student' ? `
-        <div class="fg"><label class="fl">Student ID</label><input class="fi" id="prof-sid" type="text" value="${u.id || ''}" placeholder="e.g., 21210747" readonly style="background:${u.id && u.id.includes('-') ? '#fff3cd' : '#f0fdf4'};"/></div>
-        <div class="form-row">
-          <div class="fg"><label class="fl">Course / Program</label>
-            <select class="fi" id="prof-course">
-              ${['BS Computer Science', 'BS Criminology', 'BSED', 'CBA', 'Electrical Engineering', 'Mechanical Engineering', 'COED', 'Hospital Management', 'Tourism Management'].map((c) => `<option${((u.course || '') === c) ? ' selected' : ''}>${c}</option>`).join('')}
-            </select>
-          </div>
-          <div class="fg"><label class="fl">Year Level</label>
-            <select class="fi" id="prof-year">
-              ${['1st Year', '2nd Year', '3rd Year', '4th Year', 'Graduate'].map((y) => `<option${u.year === y ? ' selected' : ''}>${y}</option>`).join('')}
-            </select>
-          </div>
-        </div>` : ''}
+        `}
+
+        <div style="margin-top:8px;padding-top:6px;border-top:1px solid var(--n100);">
+          <div style="font-weight:700;color:var(--n800);margin-bottom:4px;">Security</div>
+          <div style="font-size:12px;color:var(--n500);margin-bottom:8px;">You may update your password below.</div>
+        </div>
+
         <div class="fg"><label class="fl">New Password <span style="font-weight:400;color:var(--n300);">(leave blank to keep current)</span></label>
           <div class="pw-wrap"><input class="fi" type="password" id="prof-pw" placeholder="Enter new password"/><button class="pw-eye" onclick="togglePw('prof-pw')" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         </div>
@@ -707,7 +728,7 @@ function renderProfile() {
         <div class="fg"><label class="fl">Confirm Password</label>
           <div class="pw-wrap"><input class="fi" type="password" id="prof-pw-confirm" placeholder="Confirm new password"/><button class="pw-eye" onclick="togglePw('prof-pw-confirm')" type="button"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></div>
         </div>` : ''}
-        <button class="btn btn-primary" onclick="saveProfile()">Save Changes</button>
+        <div style="margin-top:12px;"><button class="btn btn-primary" onclick="saveProfile()">Save Changes</button></div>
       </div>
     </div>
     <div>
@@ -949,13 +970,25 @@ function setupPhotoUploadButton() {
 }
 
 function saveProfile() {
-  const name = document.getElementById('prof-name')?.value?.trim();
-  const email = document.getElementById('prof-email')?.value?.trim();
+  let name = document.getElementById('prof-name')?.value?.trim();
+  let email = document.getElementById('prof-email')?.value?.trim();
   const pw = document.getElementById('prof-pw')?.value;
   const pwConfirm = document.getElementById('prof-pw-confirm')?.value;
   let studentId = null;
   if (document.getElementById('prof-sid')) {
     studentId = document.getElementById('prof-sid')?.value?.trim();
+  }
+
+  // Preserve current stored identity before any DOM values are trusted
+  const oldName = currentUser.name;
+  const oldEmail = currentUser.email || '';
+  const oldId = currentUser.id;
+
+  // Prevent students from bypassing UI restrictions by tampering with the DOM.
+  if (currentRole === 'student') {
+    studentId = oldId;
+    name = oldName;
+    email = oldEmail;
   }
 
   if (!name) {
@@ -967,22 +1000,16 @@ function saveProfile() {
     return;
   }
 
-  const oldName = currentUser.name;
-  const oldId = currentUser.id;
-
-  // Students cannot change their Student ID from this page.
-  if (currentRole === 'student') {
-    studentId = oldId;
-  }
-
-  // Update currentUser fields (do not change ID for students)
+  // Update currentUser fields (do not change ID or restricted fields for students)
   currentUser.name = name;
   currentUser.email = email || '';
   if (currentRole !== 'student' && studentId && studentId !== oldId) {
     currentUser.id = studentId;
   }
-  if (document.getElementById('prof-course')) currentUser.course = document.getElementById('prof-course').value;
-  if (document.getElementById('prof-year')) currentUser.year = document.getElementById('prof-year').value;
+  if (currentRole !== 'student') {
+    if (document.getElementById('prof-course')) currentUser.course = document.getElementById('prof-course').value;
+    if (document.getElementById('prof-year')) currentUser.year = document.getElementById('prof-year').value;
+  }
 
   // Handle password: keep confirm validation, but don't change student passwords here.
   if (pw) {

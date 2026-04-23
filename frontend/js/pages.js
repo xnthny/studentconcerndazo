@@ -77,7 +77,7 @@ function renderStudentDash() {
   </div>
   <div class="two-col">
     <div><div class="card"><div class="card-hdr"><div class="card-title">Recent Tickets</div><button class="btn btn-sm" onclick="showPage('s-tickets')">View all</button></div>${my.length ? tbl(my.slice(0, 3), false, false) : `<div class="empty-state">${IC.list}<p>No tickets yet. <a onclick="showPage('s-submit')" style="color:var(--cg-dark);cursor:pointer;font-weight:600;">Submit your first concern</a></p></div>`}</div></div>
-    <div><div class="card"><div class="card-title">Announcements</div>${visibleAnnouncements.length ? visibleAnnouncements.map((a) => `<div class="ann-item"><div class="ann-dot"></div><div><div class="ann-title">${a.title}</div><div class="ann-body">${a.body}</div><div class="ann-date">${a.date}</div></div></div>`).join('') : `<div style="color:var(--n400);font-size:12px;padding:12px 0;">No announcements for students.</div>`}</div></div>
+    <div><div class="card"><div class="card-title">Announcements</div>${visibleAnnouncements.length ? visibleAnnouncements.map((a) => `<div class="ann-item" onclick="markAnnouncementReadAndOpen('${a.id}')" style="cursor:pointer;transition:background .12s;" onmouseover="this.style.background='var(--n50)'" onmouseout="this.style.background='transparent'"><div class="ann-dot" style="background:${a.read ? 'var(--n300)' : 'var(--cg)'}"></div><div><div class="ann-title">${a.title}</div><div class="ann-body">${a.body}</div><div class="ann-date">${a.date}</div></div></div>`).join('') : `<div style="color:var(--n400);font-size:12px;padding:12px 0;">No announcements for students.</div>`}</div></div>
   </div></div>`;
 }
 

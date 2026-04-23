@@ -522,6 +522,55 @@ async function apiDeleteAnnouncement(id) {
   return response;
 }
 
+// Mark announcement read (backend when id is UUID, else local fallback)
+async function apiMarkAnnouncementRead(announcementId) {
+  const uuidRe = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  if (!uuidRe.test(String(announcementId || ''))) {
+    // Local announcement id (ANN-xxx) - mark via localStorage helpers
+    try {
+      const uid = currentUser && currentUser.id ? currentUser.id : '';
+      const mark = `ann:${announcementId}`;
+      const ids = getReadStudentNotificationIds(uid);
+      if (!ids.includes(mark)) {
+        ids.push(mark);
+        saveReadStudentNotificationIds(uid, ids);
+      }
+      return { ok: true, local: true };
+    } catch (e) {
+      return { ok: false, error: e };
+    }
+  }
+
+  const response = await apiCall(`/announcements/${announcementId}/read`, {
+    method: 'POST'
+  });
+  return response;
+}
+
+// Helper: mark read then open Notifications page
+async function markAnnouncementReadAndOpen(announcementId) {
+  try {
+    if (typeof apiMarkAnnouncementRead === 'function') {
+      await apiMarkAnnouncementRead(announcementId);
+    }
+  } catch (e) {
+    console.warn('Failed to mark announcement read:', e && e.message ? e.message : e);
+  }
+
+  // Update local ANNOUNCEMENTS cache so UI updates immediately
+  try {
+    const idx = (ANNOUNCEMENTS || []).findIndex((a) => a && String(a.id) === String(announcementId));
+    if (idx >= 0) {
+      ANNOUNCEMENTS[idx].is_read = true;
+      ANNOUNCEMENTS[idx].read = true;
+      try { saveAnnouncements(); } catch (e) {}
+    }
+  } catch (e) {}
+
+  // Navigate to notifications
+  try { showPage('s-notifs'); } catch (e) { showPage('s-notifs'); }
+}
+
 // Profile API calls
 async function apiGetProfile(userId) {
   const response = await apiCall(`/profiles/${userId}`);

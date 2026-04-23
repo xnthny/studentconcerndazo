@@ -803,6 +803,8 @@ function loadAnnouncements() {
               id: item.id,
               title: item.title || '',
               body: item.body || item.message || '',
+              // Server may provide per-user read flag as `is_read`; preserve legacy `read` if present
+              read: Boolean(item.is_read || item.read),
               audience: item.audience || 'All Users',
               // Format created_at into a readable date similar to existing local entries
               date: item.created_at ? (function () { try { return new Date(item.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }); } catch (e) { return String(item.created_at || ''); } })() : (item.date || ''),
@@ -1118,7 +1120,7 @@ function getStudentNotifications(user) {
   const items = [];
   const readIds = new Set(getReadStudentNotificationIds(targetUser.id));
 
-  (Array.isArray(ANNOUNCEMENTS) ? ANNOUNCEMENTS : [])
+    (Array.isArray(ANNOUNCEMENTS) ? ANNOUNCEMENTS : [])
     .filter((a) => a && !a.draft && (!a.audience || a.audience === 'All Users' || a.audience === 'Students Only'))
     .forEach((a) => {
       const timeValue = a.createdAt || a.date || '';
@@ -1128,7 +1130,8 @@ function getStudentNotifications(user) {
         body: a.body || '',
         time: timeValue,
         sortTime: getNotificationTimestamp(timeValue),
-        read: readIds.has(`ann:${a.id}`)
+        // Prefer server-provided read flag (a.is_read) but fall back to localStorage markers
+        read: Boolean(a.is_read) || readIds.has(`ann:${a.id}`)
       });
     });
 
