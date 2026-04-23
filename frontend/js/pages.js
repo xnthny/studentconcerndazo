@@ -215,6 +215,9 @@ function renderMyTickets() {
               if (hdr) hdr.textContent = String(rows.length) + ' concern(s) submitted';
             } catch (e) {}
 
+            // Update the small filter badge count so it matches the newly rendered rows
+            try { updateFilterBadge('s-tickets', rows); } catch (e) {}
+
             // Optionally update local cache
             try {
               TICKETS = rows;

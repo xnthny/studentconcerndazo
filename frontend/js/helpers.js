@@ -15,12 +15,26 @@ function isCurrentStudentTicket(t) {
   const ids = [currentUser.student_id, currentUser.id]
     .filter(Boolean)
     .map((v) => String(v).trim());
-  const ownerIds = [t.studentId, t.student_id]
+  const ownerIds = [
+    t.studentId,
+    t.student_id,
+    // handle nested student relation objects returned by backend
+    (t.student && (t.student.id || t.student.student_id || t.student.studentId)) || null,
+    (t.student && (t.student.username || t.student.uname)) || null
+  ]
     .filter(Boolean)
     .map((v) => String(v).trim());
+
   if (ids.length && ownerIds.some((oid) => ids.includes(oid))) {
     return true;
   }
+
+  // If `t.student` is an object, try to match by known name fields
+  if (t.student && typeof t.student === 'object') {
+    const studentName = String(t.student.full_name || t.student.name || t.student.username || t.student.uname || '').trim().toLowerCase();
+    if (studentName && studentName === String(currentUser.name || '').trim().toLowerCase()) return true;
+  }
+
   return String(t.student || '').trim().toLowerCase() === String(currentUser.name || '').trim().toLowerCase();
 }
 
