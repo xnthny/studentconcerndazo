@@ -73,18 +73,51 @@ router.get('/user/:userId', verifyToken, async (req, res) => {
 // Create new ticket
 router.post('/', verifyToken, async (req, res) => {
   try {
-    const { subject, details, category, department, priority } = req.body;
-    const userId = req.user.userId;
+    const { subject, details, category, department, priority, student_id: bodyStudentId } = req.body;
 
     if (!subject || !details || !department) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    // Determine the UUID to store in tickets.student_id.
+    // If the client provided `student_id` in the body, it may be either a UUID
+    // or a student number (text). Resolve student numbers to the user's UUID.
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+    let studentUuid = null;
+
+    if (bodyStudentId) {
+      if (uuidRegex.test(String(bodyStudentId))) {
+        studentUuid = bodyStudentId;
+      } else {
+        // bodyStudentId looks like a student number; look up the user's UUID
+        const { data: userRow, error: userErr } = await supabase
+          .from('users')
+          .select('id')
+          .eq('student_id', bodyStudentId)
+          .single();
+
+        if (userErr) {
+          const msg = String(userErr.message || userErr || '');
+          if (/no rows|0 rows|not found/i.test(msg)) {
+            return res.status(400).json({ error: 'Student not found' });
+          }
+          throw userErr;
+        }
+
+        if (!userRow || !userRow.id) return res.status(400).json({ error: 'Student not found' });
+        studentUuid = userRow.id;
+      }
+    } else {
+      // Fallback to the authenticated user's UUID from the token
+      studentUuid = req.user?.userId;
     }
 
     const { data: newTicket, error } = await supabase
       .from('tickets')
       .insert([
         {
-          user_id: userId,
+          student_id: studentUuid,
           subject,
           details,
           category: category || department,
@@ -94,7 +127,7 @@ router.post('/', verifyToken, async (req, res) => {
           created_at: new Date().toISOString()
         }
       ])
-      .select()
+      .select('*, student:users(full_name, email, course, year_level)')
       .single();
 
     if (error) throw error;
