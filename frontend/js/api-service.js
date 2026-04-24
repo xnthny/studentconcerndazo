@@ -597,17 +597,20 @@ function markStaffNotificationRead(notificationId) {
       try { if (typeof buildSidebar === 'function') buildSidebar(); } catch (e) {}
       try { if (typeof showPage === 'function' && currentPageId) showPage(currentPageId); } catch (e) {}
     } else {
-      // Fallback: if announcement not in cache, mark local read ids so badge updates
+      // Fallback: if notification not in ANNOUNCEMENTS (e.g. ticket updates),
+      // persist the exact notification id to the student's read list so
+      // `getStudentNotifications()` matches it. Then refresh UI.
       try {
         const uid = currentUser && currentUser.id ? currentUser.id : '';
         if (uid) {
-          const mark = `ann:${raw}`;
+          const mark = String(notificationId || '');
           const ids = getReadStudentNotificationIds(uid);
           if (!ids.includes(mark)) {
             ids.push(mark);
             saveReadStudentNotificationIds(uid, ids);
           }
           try { if (typeof buildSidebar === 'function') buildSidebar(); } catch (e) {}
+          try { if (typeof showPage === 'function' && currentPageId) showPage(currentPageId); } catch (e) {}
         }
       } catch (e) {}
     }

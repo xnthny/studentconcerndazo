@@ -299,7 +299,7 @@ function renderNotifs() {
   };
 
   const listHtml = notifs.length
-    ? notifs.map((n) => `<div class="notif-item" onclick="markStaffNotificationRead('${n.id}')" style="cursor:pointer;transition:background .12s;" onmouseover="this.style.background='var(--n50)'" onmouseout="this.style.background='transparent'"><div class="notif-dot ${n.read ? 'read' : 'unread'}"></div><div style="flex:1;"><div class="notif-title" style="${!n.read ? 'color:var(--cg-dark);' : ''}">${n.title}</div><div class="notif-body">${n.body}</div><div class="notif-time">${relTime(n.time)}</div></div></div>`).join('')
+    ? notifs.map((n) => `<div class="notif-item" onclick="markStudentNotificationClick('${n.id}')" style="cursor:pointer;transition:background .12s;" onmouseover="this.style.background='var(--n50)'" onmouseout="this.style.background='transparent'"><div class="notif-dot ${n.read ? 'read' : 'unread'}"></div><div style="flex:1;"><div class="notif-title" style="${!n.read ? 'color:var(--cg-dark);' : ''}">${n.title}</div><div class="notif-body">${n.body}</div><div class="notif-time">${relTime(n.time)}</div></div></div>`).join('')
     : `<div style="padding:20px 0;text-align:center;color:var(--n400);font-size:13px;">No notifications yet.</div>`;
 
   return `<div><div class="page-hdr"><div><div class="page-title">Notifications</div><div class="page-sub">${unreadCount} unread</div></div>${unreadCount ? `<button class="btn btn-sm" onclick="markStudentNotificationsAsRead()">Mark all read</button>` : ''}</div>
@@ -310,6 +310,38 @@ function markStudentNotificationsAsRead() {
   markAllStudentNotificationsRead(currentUser);
   buildSidebar();
   showPage('s-notifs');
+}
+
+// Handle single student notification click: persist same read list used by "Mark all read",
+// call server for announcement UUIDs, and immediately refresh UI.
+function markStudentNotificationClick(notificationId) {
+  if (!notificationId) return;
+
+  const uid = currentUser && currentUser.id ? currentUser.id : '';
+  if (!uid) return;
+
+  try {
+    const ids = getReadStudentNotificationIds(uid);
+    if (!ids.includes(notificationId)) {
+      ids.push(notificationId);
+      saveReadStudentNotificationIds(uid, ids);
+    }
+  } catch (e) {}
+
+  // If it's a server-backed announcement, call backend mark-read in background
+  try {
+    if (String(notificationId || '').startsWith('ann:')) {
+      const raw = String(notificationId).replace(/^ann:/, '');
+      if (typeof apiMarkAnnouncementRead === 'function') {
+        (async () => {
+          try { await apiMarkAnnouncementRead(raw); } catch (e) { console.warn('Failed to mark announcement read:', e); }
+        })();
+      }
+    }
+  } catch (e) {}
+
+  try { if (typeof buildSidebar === 'function') buildSidebar(); } catch (e) {}
+  try { showPage('s-notifs'); } catch (e) { try { if (typeof showPage === 'function') showPage('s-notifs'); } catch (er) {} }
 }
 
 function renderStaffNotifs(label) {
