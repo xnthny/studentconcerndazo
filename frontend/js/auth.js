@@ -467,10 +467,15 @@ function doLogin() {
         currentUser = { ...response.user, username: accountKey, uname: accountKey };
         setUserActiveSession(accountKey, response.user);
 
-        // Save session to localStorage
+        // Save session to localStorage and refresh announcements when a backend token is present
         try {
           if (response.token) localStorage.setItem('authToken', response.token);
           localStorage.setItem('currentUser', JSON.stringify(response.user));
+          try {
+            if (response.token && typeof loadAnnouncements === 'function') {
+              loadAnnouncements();
+            }
+          } catch (e) {}
         } catch (e) {
           console.error('Failed to persist session:', e);
         }
@@ -589,9 +594,18 @@ function doLogin() {
         currentUser = { ...response.user, username: accountKey, uname: accountKey };
         setUserActiveSession(accountKey, response.user);
         
-        // Save session to localStorage
-        localStorage.setItem('currentUser', JSON.stringify(response.user));
-        localStorage.setItem('authToken', response.token || 'backend-token');
+        // Save session to localStorage and refresh announcements when a backend token is present
+        try {
+          localStorage.setItem('currentUser', JSON.stringify(response.user));
+          if (response.token) {
+            localStorage.setItem('authToken', response.token);
+            try { if (typeof loadAnnouncements === 'function') loadAnnouncements(); } catch (e) {}
+          } else {
+            localStorage.setItem('authToken', response.token || 'backend-token');
+          }
+        } catch (e) {
+          console.error('Failed to persist session:', e);
+        }
 
         // Update shared presence so admin can see active state across browsers.
         if (typeof apiSetPresence === 'function') {
