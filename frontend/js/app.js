@@ -140,7 +140,7 @@ document.addEventListener('DOMContentLoaded', function () {
       document.getElementById('app-screen').style.display = 'block';
       
       // Update UI
-      document.getElementById('tb-username').textContent = currentUser.full_name || currentUser.name;
+      document.getElementById('tb-username').textContent = getDisplayName(currentUser);
       updateTopbarAvatar();
       document.getElementById('role-pill').textContent = {
         student: 'Student',

@@ -105,7 +105,7 @@ function renderStudentDash() {
     }
   } catch (e) {}
   return `<div>
-  <div class="page-hdr"><div><div class="page-title">My Dashboard</div><div class="page-sub">Welcome back, ${currentUser.name}!</div></div><div style="display:flex;gap:8px;"><button class="btn btn-primary" onclick="showPage('s-submit')">${IC.plus} New Concern</button></div></div>
+  <div class="page-hdr"><div><div class="page-title">My Dashboard</div><div class="page-sub">Welcome back, ${getDisplayName(currentUser)}!</div></div><div style="display:flex;gap:8px;"><button class="btn btn-primary" onclick="showPage('s-submit')">${IC.plus} New Concern</button></div></div>
     <div class="stats-grid">
     <div class="stat-card"><div class="stat-top-bar"></div><div class="stat-icon" style="background:var(--cg-pale);color:var(--cg);">${IC.list}</div><div class="stat-label">Total Concerns</div><div class="stat-val" id="dash-total">${my.length}</div><div class="stat-sub">This semester</div></div>
     <div class="stat-card"><div class="stat-top-bar" style="background:#f59e0b;"></div><div class="stat-icon" style="background:#fffbeb;color:#f59e0b;">${IC.bell}</div><div class="stat-label">Pending</div><div class="stat-val" id="dash-pending" style="color:#92600a;">${p}</div></div>
@@ -299,7 +299,7 @@ function renderNotifs() {
   };
 
   const listHtml = notifs.length
-    ? notifs.map((n) => `<div class="notif-item"><div class="notif-dot ${n.read ? 'read' : 'unread'}"></div><div style="flex:1;"><div class="notif-title" style="${!n.read ? 'color:var(--cg-dark);' : ''}">${n.title}</div><div class="notif-body">${n.body}</div><div class="notif-time">${relTime(n.time)}</div></div></div>`).join('')
+    ? notifs.map((n) => `<div class="notif-item" onclick="markStaffNotificationRead('${n.id}')" style="cursor:pointer;transition:background .12s;" onmouseover="this.style.background='var(--n50)'" onmouseout="this.style.background='transparent'"><div class="notif-dot ${n.read ? 'read' : 'unread'}"></div><div style="flex:1;"><div class="notif-title" style="${!n.read ? 'color:var(--cg-dark);' : ''}">${n.title}</div><div class="notif-body">${n.body}</div><div class="notif-time">${relTime(n.time)}</div></div></div>`).join('')
     : `<div style="padding:20px 0;text-align:center;color:var(--n400);font-size:13px;">No notifications yet.</div>`;
 
   return `<div><div class="page-hdr"><div><div class="page-title">Notifications</div><div class="page-sub">${unreadCount} unread</div></div>${unreadCount ? `<button class="btn btn-sm" onclick="markStudentNotificationsAsRead()">Mark all read</button>` : ''}</div>
@@ -329,7 +329,7 @@ function renderStaffNotifs(label) {
   };
 
   const listHtml = notifs.length
-    ? notifs.map((n) => `<div class="notif-item"><div class="notif-dot ${n.read ? 'read' : 'unread'}"></div><div style="flex:1;"><div class="notif-title" style="${!n.read ? 'color:var(--cg-dark);' : ''}">${n.title}</div><div class="notif-body">${n.body}</div><div class="notif-time">${relTime(n.time)}</div></div></div>`).join('')
+    ? notifs.map((n) => `<div class="notif-item" onclick="markStaffNotificationRead('${n.id}')" style="cursor:pointer;transition:background .12s;" onmouseover="this.style.background='var(--n50)'" onmouseout="this.style.background='transparent'"><div class="notif-dot ${n.read ? 'read' : 'unread'}"></div><div style="flex:1;"><div class="notif-title" style="${!n.read ? 'color:var(--cg-dark);' : ''}">${n.title}</div><div class="notif-body">${n.body}</div><div class="notif-time">${relTime(n.time)}</div></div></div>`).join('')
     : `<div style="padding:20px 0;text-align:center;color:var(--n400);font-size:13px;">No notifications yet.</div>`;
 
   return `<div><div class="page-hdr"><div><div class="page-title">Notifications</div><div class="page-sub">${label} · ${unreadCount} unread</div></div>${unreadCount ? `<button class="btn btn-sm" onclick="markStaffNotificationsAsRead()">Mark all read</button>` : ''}</div>

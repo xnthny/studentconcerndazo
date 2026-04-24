@@ -483,7 +483,7 @@ function doLogin() {
 
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('app-screen').style.display = 'block';
-        document.getElementById('tb-username').textContent = currentUser.full_name || currentUser.name;
+        document.getElementById('tb-username').textContent = getDisplayName(currentUser);
         updateTopbarAvatar();
         document.getElementById('role-pill').textContent = {
           student: 'Student',
@@ -601,7 +601,7 @@ function doLogin() {
         
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('app-screen').style.display = 'block';
-        document.getElementById('tb-username').textContent = currentUser.full_name || currentUser.name;
+        document.getElementById('tb-username').textContent = getDisplayName(currentUser);
         updateTopbarAvatar();
         document.getElementById('role-pill').textContent = {
           student: 'Student',
@@ -733,7 +733,7 @@ function doLoginLocal(uname, pw, errEl) {
   
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('app-screen').style.display = 'block';
-  document.getElementById('tb-username').textContent = currentUser.name;
+  document.getElementById('tb-username').textContent = getDisplayName(currentUser);
   updateTopbarAvatar();
   document.getElementById('role-pill').textContent = {
     student: 'Student',

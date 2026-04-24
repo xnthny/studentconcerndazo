@@ -677,7 +677,7 @@ function renderProfile() {
           <input type="file" id="photo-upload" accept="image/*" style="display:none;" onchange="handlePhotoUpload(event)"/>
         </div>
         <div id="photo-save-note" style="font-size:11px;color:var(--n400);margin-top:-4px;margin-bottom:8px;">Saved locally — not uploaded automatically</div>
-        <div style="font-size:18px;font-weight:800;color:var(--n800);letter-spacing:-0.3px;margin-top:4px;">${u.name}</div>
+        <div style="font-size:18px;font-weight:800;color:var(--n800);letter-spacing:-0.3px;margin-top:4px;">${getDisplayName(u)}</div>
         <div style="margin-top:6px;"><span style="display:inline-block;padding:4px 12px;border-radius:16px;font-size:11px;font-weight:700;background:${roleColors[currentRole]}22;color:${roleColors[currentRole]};border:1px solid ${roleColors[currentRole]}33;">${roleLabels[currentRole] || currentRole}</span></div>
         <div style="font-size:12px;color:var(--n400);margin-top:6px;">${u.id}</div>
         ${photo ? `<button class="btn btn-xs" style="margin-top:10px;background:transparent;border:1px solid var(--n100);color:var(--n600);box-shadow:none;" onclick="removePhoto()">Remove photo</button>` : ''}
@@ -711,6 +711,9 @@ function renderProfile() {
             <div style="font-size:13px;color:var(--cg-dark);line-height:1.35;">These details are registrar/admin-controlled. To request changes to your name, email, student ID, course, or year level, please contact the admin.</div>
           </div>
         </div>
+        ` : (currentRole === 'accounting' || currentRole === 'registrar') ? `
+        <div class="fg"><label class="fl">Full Name</label><input class="fi" id="prof-name" value="${getDisplayName(u)}" readonly style="background:#f7faf7;"/></div>
+        <div class="fg"><label class="fl">Email Address</label><input class="fi" id="prof-email" type="email" value="${u.email || ''}" placeholder="your@email.com" readonly style="background:#f7faf7;"/></div>
         ` : `
         <div class="fg"><label class="fl">Full Name</label><input class="fi" id="prof-name" value="${u.name}"/></div>
         <div class="fg"><label class="fl">Email Address</label><input class="fi" id="prof-email" type="email" value="${u.email || ''}" placeholder="your@email.com"/></div>
@@ -991,6 +994,12 @@ function saveProfile() {
     email = oldEmail;
   }
 
+  // Prevent accounting/registrar office accounts from changing name/email via DOM tampering.
+  if (currentRole === 'accounting' || currentRole === 'registrar') {
+    name = oldName;
+    email = oldEmail;
+  }
+
   if (!name) {
     toast('Name cannot be empty', 'error');
     return;
@@ -1038,12 +1047,21 @@ function saveProfile() {
   // Update USERS array (match by oldId); do not mutate photo keys here.
   const ui = USERS.findIndex((u) => u.id === oldId);
   if (ui >= 0) {
-    USERS[ui].name = name;
-    USERS[ui].email = email || '';
-    if (currentUser.course) USERS[ui].course = currentUser.course;
-    if (currentUser.year) USERS[ui].year = currentUser.year;
-    if (currentRole !== 'student' && currentUser.id !== oldId) {
-      USERS[ui].id = currentUser.id;
+    // Protect office account name/email from being overwritten via DOM edits
+    if (currentRole === 'accounting' || currentRole === 'registrar') {
+      if (currentUser.course) USERS[ui].course = currentUser.course;
+      if (currentUser.year) USERS[ui].year = currentUser.year;
+      if (currentRole !== 'student' && currentUser.id !== oldId) {
+        USERS[ui].id = currentUser.id;
+      }
+    } else {
+      USERS[ui].name = name;
+      USERS[ui].email = email || '';
+      if (currentUser.course) USERS[ui].course = currentUser.course;
+      if (currentUser.year) USERS[ui].year = currentUser.year;
+      if (currentRole !== 'student' && currentUser.id !== oldId) {
+        USERS[ui].id = currentUser.id;
+      }
     }
   }
 
@@ -1061,14 +1079,21 @@ function saveProfile() {
     const idMatchedKeys = Object.keys(ACCOUNTS).filter((key) => String(ACCOUNTS[key]?.id || '') === String(currentUser.id || ''));
     const relatedKeys = Array.from(new Set([canonicalKey, providedKey, ...idMatchedKeys].filter(Boolean)));
 
+    const isOfficeRole = (String(currentRole || '').toLowerCase() === 'accounting') || (String(currentRole || '').toLowerCase() === 'registrar');
     relatedKeys.forEach((key) => {
       if (!ACCOUNTS[key]) return;
-      ACCOUNTS[key] = {
+      const merged = {
         ...ACCOUNTS[key],
         ...currentUser,
         role: String(ACCOUNTS[key].role || currentRole).toLowerCase(),
         password: pw ? pw : ACCOUNTS[key].password
       };
+      if (isOfficeRole) {
+        // preserve canonical account name/email for office accounts
+        merged.name = ACCOUNTS[key].name;
+        merged.email = ACCOUNTS[key].email;
+      }
+      ACCOUNTS[key] = merged;
     });
 
     const finalKey = canonicalKey || providedKey || relatedKeys[0];
@@ -1107,7 +1132,7 @@ function saveProfile() {
 
   // Update UI
   const tbUserEl = document.getElementById('tb-username');
-  if (tbUserEl) tbUserEl.textContent = name;
+  if (tbUserEl) tbUserEl.textContent = getDisplayName(currentUser);
   const tbIdEl = document.getElementById('tb-id');
   if (tbIdEl) tbIdEl.textContent = currentUser.id;
   const sbUserIdEl = document.querySelector('.sb-user-id');

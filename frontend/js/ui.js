@@ -75,7 +75,7 @@ function buildSidebar() {
   const sbAv = sbPhoto
     ? `<div style="width:38px;height:38px;border-radius:50%;background-image:url(${sbPhoto});background-size:cover;background-position:center;flex-shrink:0;border:2px solid rgba(26,162,96,0.4);"></div>`
     : `<div style="width:38px;height:38px;border-radius:50%;background:${u.bg};color:${u.col};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${u.ini}</div>`;
-  let h = `<div class="sb-user"><div style="display:flex;align-items:center;gap:10px;">${sbAv}<div><div class="sb-user-name">${u.name}</div><div class="sb-user-id">${u.id}</div></div></div></div><div class="nav-sec">Navigation</div>`;
+  let h = `<div class="sb-user"><div style="display:flex;align-items:center;gap:10px;">${sbAv}<div><div class="sb-user-name">${getDisplayName(u)}</div><div class="sb-user-id">${u.id}</div></div></div></div><div class="nav-sec">Navigation</div>`;
   NAVS[currentRole].forEach((n) => {
     const unreadBadge = (
       (currentRole === 'student' && n.id === 's-notifs') ||

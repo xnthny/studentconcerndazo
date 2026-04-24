@@ -572,6 +572,62 @@ async function markAnnouncementReadAndOpen(announcementId) {
   try { showPage('s-notifs'); } catch (e) { showPage('s-notifs'); }
 }
 
+// Mark a staff notification as read (accepts IDs like "ann:<uuid>") — optimistic UI then background sync
+// Uses a small pending set to avoid double-click/spam.
+if (typeof window !== 'undefined') {
+  window.__PENDING_ANN_READS__ = window.__PENDING_ANN_READS__ || new Set();
+}
+const PENDING_ANN_READS = (typeof window !== 'undefined') ? window.__PENDING_ANN_READS__ : new Set();
+
+function markStaffNotificationRead(notificationId) {
+  if (!notificationId) return;
+  const raw = String(notificationId).replace(/^ann:/, '');
+
+  // If already pending or already read, ignore to prevent spam
+  if (PENDING_ANN_READS.has(raw)) return;
+
+  // Optimistically update local cache/UI
+  try {
+    const idx = (ANNOUNCEMENTS || []).findIndex((a) => a && String(a.id) === String(raw));
+    if (idx >= 0) {
+      if (ANNOUNCEMENTS[idx].is_read || ANNOUNCEMENTS[idx].read) return;
+      ANNOUNCEMENTS[idx].is_read = true;
+      ANNOUNCEMENTS[idx].read = true;
+      try { saveAnnouncements(); } catch (e) {}
+      try { if (typeof buildSidebar === 'function') buildSidebar(); } catch (e) {}
+      try { if (typeof showPage === 'function' && currentPageId) showPage(currentPageId); } catch (e) {}
+    } else {
+      // Fallback: if announcement not in cache, mark local read ids so badge updates
+      try {
+        const uid = currentUser && currentUser.id ? currentUser.id : '';
+        if (uid) {
+          const mark = `ann:${raw}`;
+          const ids = getReadStudentNotificationIds(uid);
+          if (!ids.includes(mark)) {
+            ids.push(mark);
+            saveReadStudentNotificationIds(uid, ids);
+          }
+          try { if (typeof buildSidebar === 'function') buildSidebar(); } catch (e) {}
+        }
+      } catch (e) {}
+    }
+  } catch (e) {}
+
+  // Send backend request in background; keep UI optimistic even if it fails
+  PENDING_ANN_READS.add(raw);
+  (async () => {
+    try {
+      if (typeof apiMarkAnnouncementRead === 'function') {
+        await apiMarkAnnouncementRead(raw);
+      }
+    } catch (e) {
+      console.warn('Failed to mark staff announcement read:', e && e.message ? e.message : e);
+    } finally {
+      PENDING_ANN_READS.delete(raw);
+    }
+  })();
+}
+
 // Profile API calls
 async function apiGetProfile(userId) {
   const response = await apiCall(`/profiles/${userId}`);

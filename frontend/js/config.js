@@ -1,7 +1,7 @@
 // Global application configuration and data
 let ACCOUNTS = {
-  'accounting.office': { password: 'AcctDev2024', role: 'accounting', name: 'Accounting Office', id: 'ACC-001', ini: 'AO', bg: 'rgba(37,99,235,0.2)', col: '#3b82f6', isNew: false, email: 'accounting.office@uv.edu.ph' },
-  'registrar.office': { password: 'RegisDev2024', role: 'registrar', name: 'Registrar Office', id: 'REG-001', ini: 'RO', bg: 'rgba(240,180,41,0.2)', col: '#d97706', isNew: false, email: 'registrar.office@uv.edu.ph' },
+  'accounting.office': { password: 'AcctDev2024', role: 'accounting', name: 'Accounting Office', id: 'ACC-001', ini: 'AO', bg: 'rgba(37,99,235,0.2)', col: '#3b82f6', isNew: false, email: 'accounting@uv.edu.ph' },
+  'registrar.office': { password: 'RegisDev2024', role: 'registrar', name: 'Registrar Office', id: 'REG-001', ini: 'RO', bg: 'rgba(240,180,41,0.2)', col: '#d97706', isNew: false, email: 'registrar@uv.edu.ph' },
   'admin': { password: 'AdminDev2024', role: 'admin', name: 'Admin User', id: 'ADM-001', ini: 'AU', bg: 'rgba(139,92,246,0.2)', col: '#7c3aed', isNew: false, email: 'admin@uv.edu.ph' },
 };
 
@@ -139,6 +139,17 @@ function normalizeStaffRole(role) {
   if (r === 'faculty') return 'Registrar';
   if (r === 'admin') return 'Admin';
   return 'Staff';
+}
+
+// Return a UI-friendly display name for users. This is a frontend-only normalization
+// used for topbar/sidebar/profile display (does not change underlying user.name).
+function getDisplayName(user) {
+  if (!user) return '';
+  const role = String(user.role || currentRole || '').toLowerCase();
+  if (role === 'accounting') return 'Accounting Office';
+  if (role === 'registrar') return 'Registrar Office';
+  if (role === 'admin') return String(user.full_name || user.name || 'Admin User');
+  return String(user.full_name || user.name || '');
 }
 
 function ensureCoreStaffUsers() {
@@ -1191,13 +1202,15 @@ function getStaffAnnouncementNotifications(user) {
     .map((a) => {
       const id = `ann:${a.id}`;
       const timeValue = a.createdAt || a.date || '';
+      // Prefer server-provided read flag (a.is_read) but fall back to localStorage markers
+      const serverRead = Boolean(a.is_read || a.read);
       return {
         id,
         title: a.title || 'Announcement',
         body: a.body || '',
         time: timeValue,
         sortTime: getNotificationTimestamp(timeValue),
-        read: readIds.has(id)
+        read: serverRead || readIds.has(id)
       };
     })
     .sort((a, b) => b.sortTime - a.sortTime);
