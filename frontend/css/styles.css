@@ -396,6 +396,11 @@ select.fi {
   font-size: 11px;
   color: rgba(120, 170, 145, 0.7);
   margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+  display: block;
 }
 
 .nav-sec {

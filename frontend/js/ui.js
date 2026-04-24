@@ -75,7 +75,21 @@ function buildSidebar() {
   const sbAv = sbPhoto
     ? `<div style="width:38px;height:38px;border-radius:50%;background-image:url(${sbPhoto});background-size:cover;background-position:center;flex-shrink:0;border:2px solid rgba(26,162,96,0.4);"></div>`
     : `<div style="width:38px;height:38px;border-radius:50%;background:${u.bg};color:${u.col};display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;flex-shrink:0;">${u.ini}</div>`;
-  let h = `<div class="sb-user"><div style="display:flex;align-items:center;gap:10px;">${sbAv}<div><div class="sb-user-name">${getDisplayName(u)}</div><div class="sb-user-id">${u.id}</div></div></div></div><div class="nav-sec">Navigation</div>`;
+  // Prepare display name and id. For staff roles show formal, short labels.
+  let displayName = getDisplayName(u) || '';
+  let displayId = String(u.student_id || u.id || u.username || '').trim() || '';
+  if (currentRole === 'accounting') {
+    displayName = 'Accounting Office';
+    displayId = 'ACC-001';
+  } else if (currentRole === 'registrar') {
+    displayName = 'Registrar Office';
+    displayId = 'REG-001';
+  } else if (currentRole === 'admin') {
+    displayName = 'Admin User';
+    displayId = 'ADM-001';
+  }
+  const idHtml = displayId ? `<div class="sb-user-id">${displayId}</div>` : '';
+  let h = `<div class="sb-user"><div style="display:flex;align-items:center;gap:10px;">${sbAv}<div><div class="sb-user-name">${displayName}</div>${idHtml}</div></div></div><div class="nav-sec">Navigation</div>`;
   NAVS[currentRole].forEach((n) => {
     const unreadBadge = (
       (currentRole === 'student' && n.id === 's-notifs') ||
