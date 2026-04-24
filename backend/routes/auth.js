@@ -1,12 +1,44 @@
 // Authentication routes
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 const router = express.Router();
 const { supabase, supabaseAdmin, supabaseServiceKey, supabaseUrl } = require('../config/supabase');
 const { generateToken } = require('../middleware/auth');
 
 // In-memory OTP attempt logs (ephemeral; useful for quick diagnostics)
 const otpLogs = [];
+
+// Sanitize response bodies before logging to avoid leaking OTPs, tokens, or secrets
+function sanitizeResponseBody(body) {
+  try {
+    if (!body) return body;
+    const clone = JSON.parse(JSON.stringify(body));
+    const sensitiveKeyRe = /(otp|token|access_token|refresh_token|password|secret|code)/i;
+    const walk = (node) => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+      } else if (node && typeof node === 'object') {
+        Object.keys(node).forEach((k) => {
+          try {
+            if (sensitiveKeyRe.test(k)) {
+              node[k] = '***REDACTED***';
+            } else if (typeof node[k] === 'string' && /^\d{4,12}$/.test(node[k])) {
+              node[k] = '***REDACTED***';
+            } else if (typeof node[k] === 'object' && node[k] !== null) {
+              walk(node[k]);
+            }
+          } catch (e) {}
+        });
+      }
+    };
+    walk(clone);
+    return clone;
+  } catch (e) {
+    return '[UNPARSEABLE_RESPONSE]';
+  }
+}
 
 // Helper: send OTP using Supabase Auth REST endpoint (/auth/v1/otp)
 async function sendOtpViaRest(email) {
@@ -355,7 +387,10 @@ router.post('/otp/send', async (req, res) => {
       return res.status(400).json({ error: 'Email already registered', message: 'Email already registered', field: 'email' });
     }
 
-    if (!supabaseServiceKey) {
+    // Determine available OTP delivery mechanism. Prefer SMTP (Nodemailer) if configured,
+    // otherwise fall back to Supabase Auth REST (existing behavior).
+    const smtpConfigured = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_FROM);
+    if (!smtpConfigured && !supabaseServiceKey) {
       return res.status(500).json({ error: 'OTP service not configured on server' });
     }
 
@@ -370,17 +405,111 @@ router.post('/otp/send', async (req, res) => {
     otpLogs.push(sendAttempt);
     while (otpLogs.length > 200) otpLogs.shift();
 
-    // Use Supabase Auth REST endpoint to request a numeric email OTP.
+    const db = supabaseAdmin || supabase;
+    // Rate-limit: max 5 sends per hour, and cooldown 30s between sends
+    try {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const { data: recentSends, error: recentErr } = await db
+        .from('otp_verifications')
+        .select('created_at')
+        .eq('email', lowerEmail)
+        .gte('created_at', oneHourAgo);
+      if (!recentErr && Array.isArray(recentSends) && recentSends.length >= 5) {
+        sendAttempt.status = 'rate_limited_hour';
+        return res.status(429).json({ error: 'Too many OTP requests. Try again later.' });
+      }
+      const { data: lastRow, error: lastErr } = await db
+        .from('otp_verifications')
+        .select('created_at')
+        .eq('email', lowerEmail)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!lastErr && lastRow && lastRow.created_at) {
+        const lastMs = new Date(lastRow.created_at).getTime();
+        if (Date.now() - lastMs < 30 * 1000) {
+          sendAttempt.status = 'cooldown';
+          return res.status(429).json({ error: 'OTP recently sent. Please wait before resending.' });
+        }
+      }
+    } catch (rlErr) {
+      console.warn('OTP rate-limit check failed:', rlErr && rlErr.message ? rlErr.message : rlErr);
+    }
+
+    // If SMTP available, generate OTP, store hashed, and send via SMTP
+    if (smtpConfigured) {
+      try {
+        const otp = String(crypto.randomInt(10000000, 100000000));
+        const otpHash = await bcrypt.hash(otp, 10);
+        const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+        const { data: inserted, error: insertErr } = await db
+          .from('otp_verifications')
+          .insert([{
+            email: lowerEmail,
+            otp_hash: otpHash,
+            purpose: 'registration',
+            expires_at: expiresAt,
+            created_at: new Date().toISOString()
+          }])
+          .select()
+          .single();
+        if (insertErr || !inserted) {
+          sendAttempt.status = 'db_insert_failed';
+          console.error('OTP insert failed:', insertErr ? insertErr.message || insertErr : 'no data');
+          return res.status(500).json({ error: 'Failed to generate OTP' });
+        }
+
+        const transporter = nodemailer.createTransport({
+          host: process.env.SMTP_HOST,
+          port: Number(process.env.SMTP_PORT) || 587,
+          secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true' || Number(process.env.SMTP_PORT) === 465,
+          auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS
+          }
+        });
+
+        const mailOptions = {
+          from: process.env.SMTP_FROM,
+          to: lowerEmail,
+          subject: 'Your ConcernTrack verification code',
+          text: `Your ConcernTrack verification code is ${otp}. It expires in 5 minutes.`,
+          html: `<p>Your ConcernTrack verification code is <strong>${otp}</strong>. It expires in 5 minutes.</p>`
+        };
+
+        const info = await transporter.sendMail(mailOptions);
+        sendAttempt.status = 'sent_smtp';
+        sendAttempt.result = { smtpMessageId: info && info.messageId ? info.messageId : null };
+        console.log('[OTP SEND] Email sent via SMTP for', lowerEmail, 'messageId=', info && info.messageId ? info.messageId : 'N/A');
+        return res.json({ ok: true, data: { smtp: true, messageId: info && info.messageId ? info.messageId : null } });
+      } catch (smtpErr) {
+        sendAttempt.status = 'smtp_failed';
+        console.error('[OTP SEND] SMTP send failed:', smtpErr && smtpErr.message ? smtpErr.message : smtpErr);
+        return res.status(500).json({ error: 'Failed to send OTP via SMTP', message: smtpErr && smtpErr.message ? smtpErr.message : String(smtpErr) });
+      }
+    }
+
+    // Fallback: use Supabase Auth REST endpoint to request a numeric email OTP.
     try {
       const restResp = await sendOtpViaRest(lowerEmail);
       sendAttempt.status = 'sent_rest';
       sendAttempt.result = { rest: restResp };
+      try {
+        const safeBody = sanitizeResponseBody(restResp);
+        console.log('[OTP SEND] Supabase response (sanitized):', JSON.stringify(safeBody));
+      } catch (e) {}
       console.log('OTP send (REST) succeeded for', lowerEmail);
       return res.json({ ok: true, data: restResp });
     } catch (restErr) {
       sendAttempt.status = 'failed_rest';
       sendAttempt.result = { restError: restErr.message, restBody: restErr.body || null };
-      console.error('OTP send (REST) failed:', restErr.message);
+      try {
+        const safeBody = sanitizeResponseBody(restErr.body || null);
+        console.error('[OTP SEND] Supabase error status=%s message=%s body=%s', restErr.status || 'N/A', restErr.message || '', JSON.stringify(safeBody));
+      } catch (e) {
+        console.error('OTP send (REST) failed:', restErr.message);
+      }
       return res.status(500).json({ error: 'Failed to send OTP', message: restErr.message, details: sendAttempt.result });
     }
   } catch (error) {
@@ -420,39 +549,54 @@ router.post('/otp/verify', async (req, res) => {
       return res.status(500).json({ error: 'OTP service not configured on server' });
     }
 
-    // Prefer verifying via Supabase REST token endpoint (grant_type=otp)
+    // Verify OTP against our local DB-stored hashed OTPs (preferred).
     try {
-      const restVerify = await verifyOtpViaRest(lowerEmail, trimmedToken);
-      verifyAttempt.status = 'verified_rest';
-      verifyAttempt.result = restVerify;
-      console.log('OTP verify (REST) succeeded for', lowerEmail);
-    } catch (restErr) {
-      // If REST verify fails, attempt admin SDK fallback
-      verifyAttempt.result = { restError: restErr.message, restBody: restErr.body || null };
-      console.warn('Supabase REST OTP verify failed, attempting admin SDK fallback:', restErr.message, restErr.body || '');
-      if (supabaseAdmin && typeof supabaseAdmin.auth?.verifyOtp === 'function') {
-        try {
-          const { data: verifyData, error: verifyError } = await supabaseAdmin.auth.verifyOtp({ email: lowerEmail, token: trimmedToken, type: 'email' });
-          if (verifyError) {
-            verifyAttempt.status = 'verify_failed_admin';
-            verifyAttempt.result = { restError: restErr.message, adminError: verifyError.message };
-            console.error('Supabase verify OTP error (admin):', verifyError);
-            return res.status(400).json({ error: 'Invalid or expired OTP', message: verifyError.message, details: verifyAttempt.result });
-          }
-          verifyAttempt.status = 'verified_admin_fallback';
-          verifyAttempt.result = { restError: restErr.message, adminResult: verifyData };
-          console.log('OTP verify (admin-fallback) succeeded for', lowerEmail);
-        } catch (adminErr) {
-          verifyAttempt.status = 'verify_exception';
-          verifyAttempt.result = { restError: restErr.message, adminException: adminErr.message };
-          console.error('Supabase verify OTP exception (admin):', adminErr);
-          return res.status(400).json({ error: 'Invalid or expired OTP', message: adminErr.message, details: verifyAttempt.result });
-        }
-      } else {
-        verifyAttempt.status = 'no_fallback';
-        console.error('No available method to verify OTP:', restErr.message);
-        return res.status(400).json({ error: 'Invalid or expired OTP', message: restErr.message, details: verifyAttempt.result });
+      const db = supabaseAdmin || supabase;
+      const nowIso = new Date().toISOString();
+      const { data: otpRow, error: otpErr } = await db
+        .from('otp_verifications')
+        .select('*')
+        .eq('email', lowerEmail)
+        .eq('purpose', 'registration')
+        .is('used_at', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (otpErr) {
+        console.error('OTP lookup error:', otpErr.message || otpErr);
+        return res.status(500).json({ error: 'OTP verification failed', message: 'Unable to verify OTP' });
       }
+
+      if (!otpRow) {
+        // No OTP found for this email
+        verifyAttempt.status = 'no_otp_found';
+        return res.status(400).json({ error: 'Invalid or expired OTP', message: 'No OTP found for this email' });
+      }
+
+      if (!otpRow.expires_at || new Date(otpRow.expires_at).getTime() < Date.now()) {
+        verifyAttempt.status = 'otp_expired';
+        return res.status(400).json({ error: 'Invalid or expired OTP', message: 'OTP has expired' });
+      }
+
+      const match = await bcrypt.compare(trimmedToken, otpRow.otp_hash || '');
+      if (!match) {
+        verifyAttempt.status = 'invalid_otp';
+        return res.status(400).json({ error: 'Invalid or expired OTP', message: 'OTP does not match' });
+      }
+
+      // Mark OTP as used (best-effort)
+      try {
+        await db.from('otp_verifications').update({ used_at: new Date().toISOString() }).eq('id', otpRow.id);
+      } catch (markErr) {
+        console.warn('Failed to mark OTP used:', markErr && markErr.message ? markErr.message : markErr);
+      }
+
+      verifyAttempt.status = 'verified_local_db';
+      verifyAttempt.result = { otpId: otpRow.id };
+    } catch (e) {
+      console.error('OTP verify error:', e && e.message ? e.message : e);
+      return res.status(500).json({ error: 'OTP verification failed', message: e && e.message ? e.message : String(e) });
     }
 
     // Extract registration fields from body (support pending object or top-level fields)
