@@ -312,6 +312,57 @@ function markStudentNotificationsAsRead() {
   showPage('s-notifs');
 }
 
+// Mark a single student notification as read (uses same storage as "Mark all read")
+function markStudentNotificationClick(notificationId) {
+  if (!notificationId) return;
+
+  try {
+    const uid = currentUser && currentUser.id ? currentUser.id : '';
+    if (!uid) return;
+
+    // Persist to the same read-list used by "Mark all read"
+    try {
+      const ids = getReadStudentNotificationIds(uid);
+      if (!ids.includes(notificationId)) {
+        ids.push(notificationId);
+        saveReadStudentNotificationIds(uid, ids);
+      }
+    } catch (e) {
+      // ignore storage errors
+    }
+
+    // If this is an announcement (ann:<uuid>), fire backend mark in background
+    try {
+      if (String(notificationId || '').startsWith('ann:')) {
+        const raw = String(notificationId).replace(/^ann:/, '');
+        (async () => {
+          try {
+            if (typeof apiMarkAnnouncementRead === 'function') {
+              await apiMarkAnnouncementRead(raw);
+            }
+          } catch (err) {
+            console.warn('Failed to mark announcement read:', err && err.message ? err.message : err);
+          }
+        })();
+
+        // Optimistically update client ANNOUNCEMENTS cache
+        try {
+          const idx = (ANNOUNCEMENTS || []).findIndex((a) => a && String(a.id) === String(raw));
+          if (idx >= 0) {
+            ANNOUNCEMENTS[idx].is_read = true;
+            ANNOUNCEMENTS[idx].read = true;
+            try { saveAnnouncements(); } catch (e) {}
+          }
+        } catch (e) {}
+      }
+    } catch (e) {}
+
+    // Update UI immediately
+    try { if (typeof buildSidebar === 'function') buildSidebar(); } catch (e) {}
+    try { showPage('s-notifs'); } catch (e) { /* best-effort */ }
+  } catch (e) {}
+}
+
 function renderStaffNotifs(label) {
   const notifs = getStaffAnnouncementNotifications(currentUser);
   const unreadCount = notifs.filter((n) => !n.read).length;
