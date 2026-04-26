@@ -5,9 +5,6 @@ function showPage(id) {
   if (currentRole === 'student' && typeof syncCurrentUserWithSaved === 'function') {
     syncCurrentUserWithSaved();
   }
-  if (typeof normalizeAllTickets === 'function') {
-    normalizeAllTickets();
-  }
   
   currentPageId = id;
   activeFilter = 'All';
@@ -99,7 +96,7 @@ function renderStudentDash() {
             } catch (e) {}
 
             // Update local cache
-            try { TICKETS = rows.map((row) => normalizeTicket(row)); saveTickets(); } catch (e) {}
+            try { TICKETS = rows; saveTickets(); } catch (e) {}
           })
           .catch(function () {
             // ignore backend errors; keep local tickets
@@ -260,7 +257,7 @@ function renderMyTickets() {
 
             // Optionally update local cache
             try {
-              TICKETS = rows.map((row) => normalizeTicket(row));
+              TICKETS = rows;
               saveTickets();
             } catch (e) {}
           })
@@ -315,38 +312,6 @@ function markStudentNotificationsAsRead() {
   showPage('s-notifs');
 }
 
-// Handle single student notification click: persist same read list used by "Mark all read",
-// call server for announcement UUIDs, and immediately refresh UI.
-function markStudentNotificationClick(notificationId) {
-  if (!notificationId) return;
-
-  const uid = currentUser && currentUser.id ? currentUser.id : '';
-  if (!uid) return;
-
-  try {
-    const ids = getReadStudentNotificationIds(uid);
-    if (!ids.includes(notificationId)) {
-      ids.push(notificationId);
-      saveReadStudentNotificationIds(uid, ids);
-    }
-  } catch (e) {}
-
-  // If it's a server-backed announcement, call backend mark-read in background
-  try {
-    if (String(notificationId || '').startsWith('ann:')) {
-      const raw = String(notificationId).replace(/^ann:/, '');
-      if (typeof apiMarkAnnouncementRead === 'function') {
-        (async () => {
-          try { await apiMarkAnnouncementRead(raw); } catch (e) { console.warn('Failed to mark announcement read:', e); }
-        })();
-      }
-    }
-  } catch (e) {}
-
-  try { if (typeof buildSidebar === 'function') buildSidebar(); } catch (e) {}
-  try { showPage('s-notifs'); } catch (e) { try { if (typeof showPage === 'function') showPage('s-notifs'); } catch (er) {} }
-}
-
 function renderStaffNotifs(label) {
   const notifs = getStaffAnnouncementNotifications(currentUser);
   const unreadCount = notifs.filter((n) => !n.read).length;
@@ -385,13 +350,11 @@ function markStaffNotificationsAsRead() {
 
 /* ── DEPT PAGES ── */
 function renderAccDash() {
-  const accountingTickets = ticketsForDept('Accounting');
-  return deptDash('Accounting Dashboard', 'Manage financial concerns - ' + accountingTickets.filter((t) => t.status === 'Pending').length + ' pending', accountingTickets, 'a-notifs');
+  return deptDash('Accounting Dashboard', 'Manage financial concerns — ' + TICKETS.filter((t) => t.dept === 'Accounting' && t.status === 'Pending').length + ' pending', TICKETS.filter((t) => t.dept === 'Accounting'), 'a-notifs');
 }
 
 function renderRegDash() {
-  const registrarTickets = ticketsForDept('Registrar');
-  return deptDash('Registrar Dashboard', 'Manage academic record concerns - ' + registrarTickets.filter((t) => t.status === 'Pending').length + ' pending', registrarTickets, 'r-notifs');
+  return deptDash('Registrar Dashboard', 'Manage academic record concerns — ' + TICKETS.filter((t) => t.dept === 'Registrar' && t.status === 'Pending').length + ' pending', TICKETS.filter((t) => t.dept === 'Registrar'), 'r-notifs');
 }
 
 function deptDash(title, sub, tickets, notifsPageId = '') {
@@ -412,10 +375,9 @@ function deptDash(title, sub, tickets, notifsPageId = '') {
 }
 
 function renderAccConcerns() {
-  const my = ticketsForDept('Accounting');
+  const my = TICKETS.filter((t) => t.dept === 'Accounting');
   const newCount = my.filter((t) => t.status === 'Pending').length;
-  refreshDepartmentTicketsFromBackend('Accounting', 'a-concerns');
-  return `<div><div class="page-hdr"><div><div class="page-title">Financial Concerns</div><div class="page-sub">${my.length} total Â· <span style="color:#92600a;font-weight:700;">${newCount} pending</span></div></div></div>
+  return `<div><div class="page-hdr"><div><div class="page-title">Financial Concerns</div><div class="page-sub">${my.length} total · <span style="color:#92600a;font-weight:700;">${newCount} pending</span></div></div></div>
   <div style="margin-bottom:12px;">${[
     { label: 'All', value: 'All' },
     { label: 'Tuition', value: 'Tuition payment' },
@@ -433,10 +395,9 @@ function renderAccConcerns() {
 }
 
 function renderRegConcerns() {
-  const my = ticketsForDept('Registrar');
+  const my = TICKETS.filter((t) => t.dept === 'Registrar');
   const newCount = my.filter((t) => t.status === 'Pending').length;
-  refreshDepartmentTicketsFromBackend('Registrar', 'r-concerns');
-  return `<div><div class="page-hdr"><div><div class="page-title">Academic Concerns</div><div class="page-sub">${my.length} total Â· <span style="color:#92600a;font-weight:700;">${newCount} pending</span></div></div></div>
+  return `<div><div class="page-hdr"><div><div class="page-title">Academic Concerns</div><div class="page-sub">${my.length} total · <span style="color:#92600a;font-weight:700;">${newCount} pending</span></div></div></div>
   <div style="margin-bottom:12px;">${[
     { label: 'All', value: 'All' },
     { label: 'Enrollment', value: 'Enrollment issues' },
@@ -453,42 +414,8 @@ function renderRegConcerns() {
   </div></div>`;
 }
 
-function refreshDepartmentTicketsFromBackend(dept, pageId) {
-  if (typeof apiGetTickets !== 'function') {
-    return;
-  }
-
-  setTimeout(() => {
-    apiGetTickets()
-      .then((rows) => {
-        if (!Array.isArray(rows)) return;
-        TICKETS = rows.map((row) => normalizeTicket(row));
-        saveTickets();
-
-        if (currentPageId === pageId) {
-          const data = ticketsForDept(dept);
-          const table = document.getElementById('tbl-container');
-          if (table) table.innerHTML = filterTbl(data, true, true);
-          const sub = document.querySelector('#main .page-hdr .page-sub');
-          if (sub) {
-            const pending = data.filter((t) => t.status === 'Pending').length;
-            sub.innerHTML = `${data.length} total Â· <span style="color:#92600a;font-weight:700;">${pending} pending</span>`;
-          }
-          updateFilterBadge(pageId, data);
-        }
-      })
-      .catch(() => {
-        // Keep local tickets when the backend is unavailable.
-      });
-  }, 0);
-}
-
 function renderReports(dept) {
-  const deptTickets = ticketsForDept(dept);
-  return renderDepartmentReportsFromTickets(dept, deptTickets);
-}
-
-function renderDepartmentReportsFromTickets(dept, deptTickets) {
+  const deptTickets = TICKETS.filter((t) => t.dept === dept);
   const monthKey = new Date().toISOString().slice(0, 7);
   const totalThisMonth = deptTickets.filter((t) => String(t.date || '').slice(0, 7) === monthKey).length;
   const resolvedCount = deptTickets.filter((t) => t.status === 'Resolved').length;
