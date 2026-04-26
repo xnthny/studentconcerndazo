@@ -136,6 +136,16 @@ body {
   box-shadow: 0 0 0 3px rgba(26, 162, 96, 0.1);
 }
 
+.fi.field-invalid {
+  border-color: #ef4444;
+  background: #fff7f7;
+}
+
+.fi.field-invalid:focus {
+  border-color: #ef4444;
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
 .fi::placeholder {
   color: var(--n300);
 }
@@ -257,6 +267,14 @@ select.fi {
   font-size: 11px;
   color: var(--n300);
   margin-top: 4px;
+}
+
+.field-error {
+  display: none;
+  color: #991b1b;
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 5px;
 }
 
 /* APP */

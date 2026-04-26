@@ -1,67 +1,193 @@
 // API module - API calls and form handlers
 
-// Backend connection base (live Render deployment)
-const BACKEND_BASE = 'https://studentconcerndazo.onrender.com/api';
+function getBackendBases() {
+  const configuredBase = String(
+    (typeof window !== 'undefined' && window && window.BACKEND_BASE)
+      ? window.BACKEND_BASE
+      : ''
+  ).trim();
+  const remoteBase = 'https://studentconcerndazo.onrender.com/api';
+
+  const bases = [];
+
+  try {
+    const host = String(window.location.hostname || '').toLowerCase();
+    const port = String(window.location.port || '').trim();
+    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '';
+    const currentOriginApi = port ? `${window.location.protocol}//${window.location.host}/api` : '';
+    const backendPorts = ['10000', '5000'];
+    const isBackendOrigin = backendPorts.includes(port);
+
+    if (isLocal) {
+      if (configuredBase) {
+        bases.push(configuredBase);
+      }
+      if (isBackendOrigin && currentOriginApi) {
+        bases.push(currentOriginApi);
+      }
+      bases.push('http://localhost:10000/api');
+      bases.push('http://127.0.0.1:10000/api');
+      bases.push('http://localhost:5000/api');
+      bases.push('http://127.0.0.1:5000/api');
+      if (!isBackendOrigin && currentOriginApi) {
+        bases.push(currentOriginApi);
+      }
+      bases.push('http://localhost:3000/api');
+      bases.push('http://127.0.0.1:3000/api');
+      bases.push(remoteBase);
+    } else if (configuredBase) {
+      bases.push(configuredBase);
+    } else {
+      bases.push(remoteBase);
+    }
+  } catch (e) {
+    // ignore browser location access issues
+  }
+
+  bases.push('/api');
+  return Array.from(new Set(
+    bases
+      .map(function (base) { return String(base || '').replace(/\/+$/, ''); })
+      .filter(Boolean)
+  ));
+}
+
+function isLocalFrontendApiBase(base) {
+  try {
+    var normalizedBase = String(base || '').replace(/\/+$/, '');
+    var currentHost = String(window.location.hostname || '').toLowerCase();
+    var currentPort = String(window.location.port || '').trim();
+    var isLocalPage = currentHost === 'localhost' || currentHost === '127.0.0.1' || currentHost === '';
+
+    if (!isLocalPage) {
+      return false;
+    }
+
+    if (normalizedBase === '/api') {
+      return !!currentPort && ['5000', '10000'].indexOf(currentPort) === -1;
+    }
+
+    var parsed = new URL(normalizedBase, window.location.origin);
+    var host = String(parsed.hostname || '').toLowerCase();
+    var port = String(parsed.port || '').trim();
+    return (host === 'localhost' || host === '127.0.0.1') && !!port && ['5000', '10000'].indexOf(port) === -1;
+  } catch (e) {
+    return false;
+  }
+}
+
+function shouldTryNextBaseOn404(base, data) {
+  if (typeof data === 'string') {
+    if (/<!doctype html>|<html[\s>]|<pre>Cannot\s+(GET|POST|PUT|PATCH|DELETE)\s+/i.test(data)) {
+      return true;
+    }
+
+    if (/^\s*not found\s*$/i.test(data) || /^\s*404\b/i.test(data)) {
+      return true;
+    }
+  }
+
+  return isLocalFrontendApiBase(base);
+}
 
 // Reusable helper to call backend endpoints. Automatically attaches Authorization header
 // from `localStorage.authToken` when present. Returns parsed JSON or throws on HTTP error.
 function backendRequest(path, options) {
   options = options || {};
-  var base = String(BACKEND_BASE || '').replace(/\/+$/, '');
   var ep = String(path || '').replace(/^\/+/, '');
-  var url = base + '/' + ep;
 
-  var headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
-  try {
-    var token = localStorage.getItem('authToken');
-    if (token) {
-      headers['Authorization'] = 'Bearer ' + token;
-    }
-  } catch (e) {
-    // ignore localStorage errors
-  }
+  var bases = getBackendBases();
+  var lastNetworkError = null;
+  var lastApiError = null;
 
-  var fetchOpts = {
-    method: options.method || 'GET',
-    headers: headers
-  };
-
-  if (options.body !== undefined && options.body !== null) {
-    // If body is already a FormData or a string, pass through; otherwise JSON.stringify
-    if (typeof FormData !== 'undefined' && options.body instanceof FormData) {
-      // remove JSON content-type for FormData
-      delete fetchOpts.headers['Content-Type'];
-      fetchOpts.body = options.body;
-    } else if (typeof options.body === 'string') {
-      fetchOpts.body = options.body;
-    } else {
-      try {
-        fetchOpts.body = JSON.stringify(options.body);
-      } catch (e) {
-        fetchOpts.body = options.body;
+  function attempt(index) {
+    if (index >= bases.length) {
+      if (lastApiError) {
+        return Promise.reject(lastApiError);
       }
+      if (lastNetworkError) {
+        return Promise.reject(lastNetworkError);
+      }
+      return Promise.reject(new Error('Could not reach backend'));
     }
-  }
 
-  return fetch(url, fetchOpts).then(function (res) {
-    return res.text().then(function (text) {
-      var data = null;
-      if (text) {
+    var base = bases[index];
+    var url = base + '/' + ep;
+    var headers = Object.assign({ 'Content-Type': 'application/json' }, options.headers || {});
+
+    try {
+      var token = localStorage.getItem('authToken');
+      if (token) {
+        headers['Authorization'] = 'Bearer ' + token;
+      }
+    } catch (e) {
+      // ignore localStorage errors
+    }
+
+    var fetchOpts = {
+      method: options.method || 'GET',
+      headers: headers
+    };
+
+    if (options.body !== undefined && options.body !== null) {
+      if (typeof FormData !== 'undefined' && options.body instanceof FormData) {
+        delete fetchOpts.headers['Content-Type'];
+        fetchOpts.body = options.body;
+      } else if (typeof options.body === 'string') {
+        fetchOpts.body = options.body;
+      } else {
         try {
-          data = JSON.parse(text);
+          fetchOpts.body = JSON.stringify(options.body);
         } catch (e) {
-          data = text;
+          fetchOpts.body = options.body;
         }
       }
-      if (!res.ok) {
-        var err = new Error((data && (data.message || data.error)) || ('HTTP ' + res.status));
-        err.status = res.status;
-        err.body = data;
+    }
+
+    return fetch(url, fetchOpts)
+      .then(function (res) {
+        return res.text().then(function (text) {
+          var data = null;
+          if (text) {
+            try {
+              data = JSON.parse(text);
+            } catch (e) {
+              data = text;
+            }
+          }
+
+          if (!res.ok) {
+            var message = (data && (data.message || data.error)) || ('HTTP ' + res.status);
+            var err = new Error(message);
+            err.status = res.status;
+            err.body = data;
+            err.url = url;
+
+            var shouldTryNextBase =
+              res.status === 404 &&
+              shouldTryNextBaseOn404(base, data);
+
+            if (shouldTryNextBase || err instanceof TypeError) {
+              lastApiError = err;
+              return attempt(index + 1);
+            }
+
+            throw err;
+          }
+
+          return data;
+        });
+      })
+      .catch(function (err) {
+        if (err instanceof TypeError) {
+          lastNetworkError = err;
+          return attempt(index + 1);
+        }
         throw err;
-      }
-      return data;
-    });
-  });
+      });
+  }
+
+  return attempt(0);
 }
 
 // Simple health-check helper for server /api/health. Returns {ok:true,data} or {ok:false,error}.
@@ -259,6 +385,7 @@ function submitConcern() {
     replies: [],
     attachments: attachments
   };
+  newTicket.department = dept;
 
   TICKETS.unshift(newTicket);
   saveTickets();

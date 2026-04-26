@@ -1,7 +1,7 @@
 // Global application configuration and data
 let ACCOUNTS = {
-  'accounting.office': { password: 'AcctDev2024', role: 'accounting', name: 'Accounting Office', id: 'ACC-001', ini: 'AO', bg: 'rgba(37,99,235,0.2)', col: '#3b82f6', isNew: false, email: 'accounting@uv.edu.ph' },
-  'registrar.office': { password: 'RegisDev2024', role: 'registrar', name: 'Registrar Office', id: 'REG-001', ini: 'RO', bg: 'rgba(240,180,41,0.2)', col: '#d97706', isNew: false, email: 'registrar@uv.edu.ph' },
+  'accounting.office': { password: 'Accounting123!', role: 'accounting', name: 'Accounting Office', id: 'ACC-001', ini: 'AO', bg: 'rgba(37,99,235,0.2)', col: '#3b82f6', isNew: false, email: 'accounting@uv.edu.ph' },
+  'registrar.office': { password: 'Registrar123!', role: 'registrar', name: 'Registrar Office', id: 'REG-001', ini: 'RO', bg: 'rgba(240,180,41,0.2)', col: '#d97706', isNew: false, email: 'registrar@uv.edu.ph' },
   'admin': { password: 'AdminDev2024', role: 'admin', name: 'Admin User', id: 'ADM-001', ini: 'AU', bg: 'rgba(139,92,246,0.2)', col: '#7c3aed', isNew: false, email: 'admin@uv.edu.ph' },
 };
 
@@ -12,9 +12,15 @@ const STAFF_CANONICAL_BY_ID = {
   'ADM-001': 'admin'
 };
 const STAFF_DEFAULT_PASSWORDS = {
-  'accounting.office': 'AcctDev2024',
-  'registrar.office': 'RegisDev2024',
+  'accounting.office': 'Accounting123!',
+  'registrar.office': 'Registrar123!',
   'admin': 'AdminDev2024'
+};
+
+const STAFF_LEGACY_PASSWORDS = {
+  'accounting.office': ['AcctDev2024'],
+  'registrar.office': ['RegisDev2024'],
+  'admin': []
 };
 
 function getStaffPasswordOverrides() {
@@ -59,7 +65,9 @@ function getStaffPasswordOverride(value) {
     return '';
   }
   const map = getStaffPasswordOverrides();
-  return String(map[key] || '');
+  const override = String(map[key] || '');
+  const legacyPasswords = STAFF_LEGACY_PASSWORDS[key] || [];
+  return legacyPasswords.includes(override) ? '' : override;
 }
 
 function setStaffPasswordOverride(value, password) {
@@ -121,8 +129,64 @@ function getDeletedUserMarkers() {
   }
 }
 
+function getStaffExpectedPassword(value) {
+  const key = getCanonicalStaffKey(value);
+  if (!key) {
+    return '';
+  }
+  return getStaffPasswordOverride(key) || STAFF_DEFAULT_PASSWORDS[key] || '';
+}
+
+function isLegacyStaffPassword(value, password) {
+  const key = getCanonicalStaffKey(value);
+  if (!key) {
+    return false;
+  }
+  return (STAFF_LEGACY_PASSWORDS[key] || []).includes(String(password || ''));
+}
+
+function purgeLegacyStaffPasswords() {
+  let changed = false;
+
+  STAFF_ACCOUNT_KEYS.forEach((key) => {
+    const expected = STAFF_DEFAULT_PASSWORDS[key] || '';
+    const legacy = STAFF_LEGACY_PASSWORDS[key] || [];
+    if (ACCOUNTS[key] && (legacy.includes(String(ACCOUNTS[key].password || '')) || !ACCOUNTS[key].password)) {
+      ACCOUNTS[key].password = expected;
+      changed = true;
+    }
+  });
+
+  try {
+    const map = getStaffPasswordOverrides();
+    Object.keys(map).forEach((key) => {
+      const legacy = STAFF_LEGACY_PASSWORDS[key] || [];
+      if (legacy.includes(String(map[key] || ''))) {
+        delete map[key];
+        changed = true;
+      }
+    });
+    localStorage.setItem('staffPasswordOverrides', JSON.stringify(map));
+  } catch (e) {}
+
+  return changed;
+}
+
+function getArchivedUserMarkers() {
+  try {
+    const raw = localStorage.getItem('archivedUsers');
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.map((value) => String(value || '').toLowerCase()).filter(Boolean);
+  } catch (e) {
+    return [];
+  }
+}
+
 function isDeletedUserRecord(user, username) {
-  const markers = getDeletedUserMarkers();
+  const markers = Array.from(new Set([...getDeletedUserMarkers(), ...getArchivedUserMarkers()]));
   if (!markers.length) {
     return false;
   }
@@ -246,8 +310,11 @@ function saveStudentRegistration(username, account, oldUsername) {
 }
 
 function loadStaffAccounts() {
+  purgeLegacyStaffPasswords();
+
   const raw = localStorage.getItem('staffAccounts') || localStorage.getItem('accountsList');
   if (!raw) {
+    saveStaffAccounts();
     return;
   }
 
@@ -268,14 +335,16 @@ function loadStaffAccounts() {
       }
 
       const defaultPassword = STAFF_DEFAULT_PASSWORDS[key] || '';
-      const preferred = candidates.find((acc) => String(acc.password || '') && String(acc.password) !== defaultPassword) || candidates[0];
+      const legacyPasswords = STAFF_LEGACY_PASSWORDS[key] || [];
+      const preferred = candidates.find((acc) => {
+        const candidatePassword = String(acc.password || '');
+        return candidatePassword && candidatePassword !== defaultPassword && !legacyPasswords.includes(candidatePassword);
+      }) || candidates[0];
       ACCOUNTS[key] = { ...ACCOUNTS[key], ...preferred };
       ACCOUNTS[key].role = String(ACCOUNTS[key].role || key).toLowerCase();
 
       const overridePw = getStaffPasswordOverride(key);
-      if (overridePw) {
-        ACCOUNTS[key].password = overridePw;
-      }
+      ACCOUNTS[key].password = overridePw || defaultPassword;
     });
 
     let changed = false;
@@ -289,7 +358,8 @@ function loadStaffAccounts() {
         const aliasPassword = String(ACCOUNTS[key]?.password || '');
         const canonicalPassword = String(ACCOUNTS[canonicalKey]?.password || '');
         const defaultPassword = STAFF_DEFAULT_PASSWORDS[canonicalKey] || '';
-        const useAliasPassword = aliasPassword && (canonicalPassword === defaultPassword || !canonicalPassword);
+        const legacyPasswords = STAFF_LEGACY_PASSWORDS[canonicalKey] || [];
+        const useAliasPassword = aliasPassword && !legacyPasswords.includes(aliasPassword) && (canonicalPassword === defaultPassword || !canonicalPassword);
 
         ACCOUNTS[canonicalKey] = {
           ...ACCOUNTS[canonicalKey],
@@ -308,6 +378,7 @@ function loadStaffAccounts() {
     }
 
     // Persist normalized snapshot so future loads are deterministic.
+    purgeLegacyStaffPasswords();
     saveStaffAccounts();
   } catch (e) {
     console.error('Failed to load staff accounts:', e);
@@ -315,13 +386,12 @@ function loadStaffAccounts() {
 }
 
 function saveStaffAccounts() {
+  purgeLegacyStaffPasswords();
+
   const payload = {};
   STAFF_ACCOUNT_KEYS.forEach((key) => {
     if (ACCOUNTS[key]) {
-      const overridePw = getStaffPasswordOverride(key);
-      if (overridePw) {
-        ACCOUNTS[key].password = overridePw;
-      }
+      ACCOUNTS[key].password = getStaffExpectedPassword(key);
       payload[key] = { ...ACCOUNTS[key] };
     }
   });

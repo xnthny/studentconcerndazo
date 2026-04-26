@@ -23,7 +23,7 @@ function showOtpScreenFor(email) {
     otp.innerHTML = `
       <div class="auth-card" style="width:420px;max-width:100%;margin:auto;">
         <div class="auth-title">Verify Your University Email</div>
-        <div class="auth-sub">Enter the 8-digit code sent to your university inbox.</div>
+        <div class="auth-sub">Enter the 8-digit code sent to your university email. Check Junk Email if it is not in your inbox.</div>
         <div class="auth-divider"></div>
         <div class="err-box" id="otp-err" style="display:none"></div>
         <div class="ok-box" id="otp-ok" style="display:none"></div>
@@ -124,7 +124,7 @@ async function resendOtpFlow(email) {
   info.textContent = 'Sending OTP…';
   const r = await apiSendOtp(email);
   if (r && r.error) throw r.error;
-  info.textContent = 'OTP sent. Check your university email inbox.';
+  info.textContent = 'OTP sent. Check your university email inbox or Junk Email folder.';
     // Cooldown 30s
     let t = 30;
     const origText = resendBtn ? resendBtn.textContent : 'Resend OTP';

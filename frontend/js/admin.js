@@ -216,7 +216,7 @@ function renderAdminDash() {
     <div class="stat-card"><div class="stat-top-bar"></div><div class="stat-icon" style="background:var(--cg-pale);color:var(--cg);">${IC.check}</div><div class="stat-label">Resolved</div><div class="stat-val" style="color:var(--cg-dark);">${TICKETS.filter((t) => t.status === 'Resolved').length}</div></div>
   </div>
   <div class="two-col-wide">
-    <div class="card"><div class="card-title">Department Load</div>${[['Accounting', TICKETS.filter((t) => t.dept === 'Accounting').length, 'var(--cg)'], ['Registrar', TICKETS.filter((t) => t.dept === 'Registrar').length, 'var(--blue)']].map(([d, n, c]) => `<div class="rep-row"><div class="rep-label">${d}</div><div style="flex:1;"><div class="prog-bar"><div class="prog-fill" style="width:${Math.min(n * 25, 100)}%;background:${c};"></div></div></div><div class="rep-count">${n}</div></div>`).join('')}</div>
+    <div class="card"><div class="card-title">Department Load</div>${[['Accounting', ticketsForDept('Accounting').length, 'var(--cg)'], ['Registrar', ticketsForDept('Registrar').length, 'var(--blue)']].map(([d, n, c]) => `<div class="rep-row"><div class="rep-label">${d}</div><div style="flex:1;"><div class="prog-bar"><div class="prog-fill" style="width:${Math.min(n * 25, 100)}%;background:${c};"></div></div></div><div class="rep-count">${n}</div></div>`).join('')}</div>
     <div class="card"><div class="card-title">Recent Activity</div>
       ${recentActivity.length ? recentActivity.map((item) => `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--n100);font-size:12px;"><span style="color:var(--n600);">${item.label}</span><div style="display:flex;align-items:center;"><span style="color:var(--n300);margin-left:8px;white-space:nowrap;">${formatActivityTime(item.time)}</span>${item.action}</div></div>`).join('') : `<div style="padding:12px 0;font-size:12px;color:var(--n400);">No recent activity yet.</div>`}
     </div>
@@ -269,7 +269,7 @@ function renderAdminUsersContent() {
       <td style="font-size:11.5px;color:var(--n500);">${u.course ? `${abbrevCourse(u.course)}<br/><span style="color:var(--n300);">${u.year}</span>` : '—'}</td>
       <td style="font-size:11.5px;color:var(--n400);">${u.email || '—'}${String(u.role || '').toLowerCase() === 'student' && u.email && !String(u.email).toLowerCase().endsWith('@uv.edu.ph') ? `<div style="margin-top:4px;display:inline-block;background:#fee2e2;color:#991b1b;padding:2px 6px;border-radius:3px;font-size:10px;font-weight:700;">NON-COMPLIANT</div>` : ''}</td>
       <td>${u.status === 'Active' ? `<span class="badge badge-resolved">Active</span>` : `<span class="badge badge-rejected">Inactive</span>`}</td>
-      <td><div style="display:flex;gap:5px;"><button class="btn btn-xs" onclick="openEditUserModal(${i})">${IC.edit} Edit</button><button class="btn btn-xs btn-danger" onclick="toggleUserStatus(${i})">${u.status === 'Active' ? 'Deactivate' : 'Activate'}</button><button class="btn btn-xs btn-danger" onclick="confirmDeleteUser(${i})">${IC.trash} Delete</button></div></td>
+      <td><div style="display:flex;gap:5px;"><button class="btn btn-xs" onclick="openEditUserModal(${i})">${IC.edit} Edit</button><button class="btn btn-xs btn-danger" onclick="toggleUserStatus(${i})">${u.status === 'Active' ? 'Deactivate' : 'Activate'}</button>${String(u.role || '').toLowerCase() === 'student' ? `<button class="btn btn-xs" onclick="confirmArchiveUser(${i})">Archive</button>` : ''}<button class="btn btn-xs btn-danger" onclick="confirmDeleteUser(${i})">${IC.trash} Delete</button></div></td>
     </tr>`).join('')}
     </tbody></table></div>
   </div></div>`;
@@ -329,6 +329,81 @@ function toggleUserStatus(i) {
   }
   saveUsers();
   toast(`"${USERS[i].name}" ${USERS[i].status === 'Active' ? 'activated' : 'deactivated'}`);
+  showPage('ad-users');
+}
+
+function confirmArchiveUser(i) {
+  const u = USERS[i];
+  if (!u || String(u.role || '').toLowerCase() !== 'student') {
+    toast('Only student accounts can be archived.', 'error');
+    return;
+  }
+
+  window.__pendingArchiveUser = { ...u };
+  openModal(
+    'Archive Student Account',
+    `Archive ${u.name}?`,
+    '<div style="padding:6px 0;color:var(--n600);font-size:13px;line-height:1.6;">Use this for students who are no longer enrolled or have dropped out. The account will be hidden from active user lists and blocked from local login, but it is not permanently deleted.</div>',
+    `<button class="btn" onclick="closeModalNow()">Cancel</button><button class="btn btn-danger" onclick="archiveUserConfirmed()">Archive Account</button>`
+  );
+}
+
+function archiveUserConfirmed() {
+  const u = window.__pendingArchiveUser || null;
+  if (!u) {
+    closeModalNow();
+    return;
+  }
+
+  const markers = [u.id, u.uname, u.backendId, u.student_id]
+    .map((value) => String(value || '').toLowerCase())
+    .filter(Boolean);
+
+  try {
+    const raw = localStorage.getItem('archivedUsers');
+    const archived = raw ? JSON.parse(raw) : [];
+    const next = Array.isArray(archived) ? archived : [];
+    markers.forEach((marker) => {
+      if (!next.includes(marker)) {
+        next.push(marker);
+      }
+    });
+    localStorage.setItem('archivedUsers', JSON.stringify(next));
+  } catch (e) {}
+
+  USERS = USERS.filter((x) => {
+    const ids = [x.id, x.uname, x.backendId, x.student_id]
+      .map((value) => String(value || '').toLowerCase())
+      .filter(Boolean);
+    return !ids.some((id) => markers.includes(id));
+  });
+
+  Object.keys(ACCOUNTS || {}).forEach((key) => {
+    const acc = ACCOUNTS[key];
+    const ids = [key, acc?.id, acc?.username, acc?.student_id]
+      .map((value) => String(value || '').toLowerCase())
+      .filter(Boolean);
+    if (ids.some((id) => markers.includes(id))) {
+      delete ACCOUNTS[key];
+    }
+  });
+
+  saveUsers();
+  try {
+    const demoAccounts = ['accounting.office', 'registrar.office', 'admin'];
+    const registered = {};
+    for (const [key, acc] of Object.entries(ACCOUNTS)) {
+      if (!demoAccounts.includes(key)) {
+        registered[key] = acc;
+      }
+    }
+    localStorage.setItem('registeredStudents', JSON.stringify(registered));
+    localStorage.setItem('registeredStudentsBackup', JSON.stringify(registered));
+  } catch (e) {}
+
+  window.__pendingArchiveUser = null;
+  closeModalNow();
+  toast(`"${u.name}" has been archived.`);
   showPage('ad-users');
 }
 
@@ -420,6 +495,9 @@ async function deleteUserConfirmed() {
 function renderAdminTickets() {
   // Reload tickets from localStorage
   loadTickets();
+  if (typeof normalizeAllTickets === 'function') {
+    normalizeAllTickets();
+  }
   
   // Build a compact category chip bar for admin using unique categories present in tickets
   const cats = Array.from(new Set((Array.isArray(TICKETS) ? TICKETS : []).map((t) => String((t && t.category) || '').trim()).filter(Boolean)));

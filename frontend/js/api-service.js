@@ -54,12 +54,135 @@ function getAuthTokenContext() {
 }
 
 function getApiBases() {
-  // Always prefer the live Render backend for browser requests.
-  return ['https://studentconcerndazo.onrender.com/api'];
+  const configuredBase = String(
+    (typeof window !== 'undefined' && window && window.BACKEND_BASE)
+      ? window.BACKEND_BASE
+      : ''
+  ).trim();
+  const remoteBase = 'https://studentconcerndazo.onrender.com/api';
+  const bases = [];
+
+  try {
+    const host = String(window.location.hostname || '').toLowerCase();
+    const port = String(window.location.port || '').trim();
+    const isLocal = host === 'localhost' || host === '127.0.0.1' || host === '';
+    const currentOriginApi = port ? `${window.location.protocol}//${window.location.host}/api` : '';
+    const backendPorts = ['10000', '5000'];
+    const isBackendOrigin = backendPorts.includes(port);
+
+    if (configuredBase) {
+      bases.push(configuredBase);
+    }
+
+    if (isLocal) {
+      if (isBackendOrigin && currentOriginApi) {
+        bases.push(currentOriginApi);
+      }
+      bases.push('http://localhost:10000/api');
+      bases.push('http://127.0.0.1:10000/api');
+      bases.push('http://localhost:5000/api');
+      bases.push('http://127.0.0.1:5000/api');
+      if (!isBackendOrigin && currentOriginApi) {
+        bases.push(currentOriginApi);
+      }
+      bases.push('http://localhost:3000/api');
+      bases.push('http://127.0.0.1:3000/api');
+      bases.push(remoteBase);
+    } else if (!configuredBase) {
+      bases.push(remoteBase);
+    }
+  } catch (e) {}
+
+  // Same-origin is useful when Express serves the frontend itself.
+  bases.push('/api');
+  return Array.from(new Set(
+    bases
+      .map((base) => String(base || '').replace(/\/+$/, ''))
+      .filter(Boolean)
+  ));
+}
+
+function isLocalFrontendApiBase(base) {
+  try {
+    const normalizedBase = String(base || '').replace(/\/+$/, '');
+    const currentHost = String(window.location.hostname || '').toLowerCase();
+    const currentPort = String(window.location.port || '').trim();
+    const isLocalPage = currentHost === 'localhost' || currentHost === '127.0.0.1' || currentHost === '';
+
+    if (!isLocalPage) {
+      return false;
+    }
+
+    if (normalizedBase === '/api') {
+      return Boolean(currentPort) && !['5000', '10000'].includes(currentPort);
+    }
+
+    const parsed = new URL(normalizedBase, window.location.origin);
+    const host = String(parsed.hostname || '').toLowerCase();
+    const port = String(parsed.port || '').trim();
+    return (host === 'localhost' || host === '127.0.0.1') && Boolean(port) && !['5000', '10000'].includes(port);
+  } catch (e) {
+    return false;
+  }
+}
+
+function shouldTryNextBaseOn404(base, data) {
+  if (typeof data === 'string') {
+    if (/<!doctype html>|<html[\s>]|<pre>Cannot\s+(GET|POST|PUT|PATCH|DELETE)\s+/i.test(data)) {
+      return true;
+    }
+
+    if (/^\s*not found\s*$/i.test(data) || /^\s*404\b/i.test(data)) {
+      return true;
+    }
+  }
+
+  return isLocalFrontendApiBase(base);
+}
+
+function apiErrorMessageFromBody(data, fallback) {
+  if (!data) {
+    return fallback;
+  }
+
+  if (typeof data === 'string') {
+    if (/<!doctype html>|<html[\s>]|<pre>/i.test(data)) {
+      return fallback;
+    }
+    return data;
+  }
+
+  if (typeof data === 'object') {
+    const candidate = data.message || data.error || data.detail || data.details;
+    if (typeof candidate === 'string') {
+      return candidate;
+    }
+    if (candidate && typeof candidate === 'object') {
+      if (typeof candidate.message === 'string') {
+        return candidate.message;
+      }
+      if (typeof candidate.error === 'string') {
+        return candidate.error;
+      }
+      try {
+        return JSON.stringify(candidate);
+      } catch (e) {
+        return fallback;
+      }
+    }
+    try {
+      return JSON.stringify(data);
+    } catch (e) {
+      return fallback;
+    }
+  }
+
+  return fallback;
 }
 
 async function apiCall(endpoint, options = {}) {
   const headers = {
+    'Accept': 'application/json',
     'Content-Type': 'application/json',
     ...options.headers,
   };
@@ -79,8 +202,10 @@ async function apiCall(endpoint, options = {}) {
 
   const bases = getApiBases();
   let lastNetworkError = null;
+  let lastApiError = null;
 
-  for (const base of bases) {
+  for (let i = 0; i < bases.length; i += 1) {
+    const base = bases[i];
     const url = `${base}${endpoint}`;
     try {
       const response = await fetch(url, {
@@ -101,8 +226,7 @@ async function apiCall(endpoint, options = {}) {
 
       if (!response.ok) {
         // Prefer structured message fields from backend; include raw body for visibility
-        const backendMsg = (data && (data.message || data.error)) || (typeof data === 'string' ? data : null);
-        const msg = backendMsg || `API Error: ${response.status}`;
+        const msg = apiErrorMessageFromBody(data, `API Error: ${response.status}`);
 
         if (response.status === 401 && /jwt malformed|invalid token|unauthorized/i.test(String(msg))) {
           localStorage.removeItem('authToken');
@@ -112,6 +236,28 @@ async function apiCall(endpoint, options = {}) {
         err.status = response.status;
         err.url = url;
         err.body = data;
+
+        const canTryNextBase = i < bases.length - 1;
+        const shouldTryNextBase =
+          response.status === 404 &&
+          canTryNextBase &&
+          shouldTryNextBaseOn404(base, data);
+
+        if (shouldTryNextBase) {
+          lastApiError = err;
+          continue;
+        }
+
+        if (response.status === 404 && isLocalFrontendApiBase(base)) {
+          err.message = 'This page is using a frontend-only local server. Start the backend on port 10000, then hard refresh the page.';
+        } else if (response.status === 404 && shouldTryNextBaseOn404(base, data)) {
+          err.message = 'This backend route is not available on the server currently handling your request. Start the local backend and hard refresh the page.';
+        }
+
+        if (response.status === 404 && /^\/auth\/password-reset\//.test(String(endpoint || ''))) {
+          err.message = 'Password reset is not available on the backend currently serving this page. Start the backend from the `backend` folder, then hard refresh the page.';
+        }
+
         throw err;
       }
 
@@ -128,6 +274,17 @@ async function apiCall(endpoint, options = {}) {
       }
       throw error;
     }
+  }
+
+  if (lastApiError) {
+    const friendly = new Error(
+      /^\/auth\/password-reset\//.test(String(endpoint || ''))
+        ? 'Password reset is not available on the backend currently serving this page. Start the backend from the `backend` folder, then hard refresh the page.'
+        : 'This backend route is not available on the server currently handling your request. Start the local backend and hard refresh the page.'
+    );
+    friendly.status = lastApiError.status;
+    friendly.url = lastApiError.url;
+    throw friendly;
   }
 
   console.error('API Network Error:', lastNetworkError);
@@ -169,11 +326,34 @@ async function apiVerifyOtpAndRegister(email, token, pending) {
   return response;
 }
 
+async function apiSendPasswordResetOtp(username) {
+  const response = await apiCall('/auth/password-reset/send', {
+    method: 'POST',
+    body: { username }
+  });
+  return response;
+}
+
+async function apiVerifyPasswordResetOtp(username, token, password) {
+  const response = await apiCall('/auth/password-reset/verify', {
+    method: 'POST',
+    body: { username, token, password }
+  });
+  return response;
+}
+
 async function apiLogin(username, password) {
   const response = await apiCall('/auth/login', {
     method: 'POST',
     body: { username, password }
   });
+
+  if (!response || response.ok === false || !response.token || !response.user) {
+    const err = new Error((response && (response.message || response.error)) || 'Invalid credentials');
+    err.status = 401;
+    err.body = response;
+    throw err;
+  }
   
   if (response.token) {
     localStorage.setItem('authToken', response.token);
@@ -219,10 +399,10 @@ async function apiGetUserTickets(userId) {
   return response;
 }
 
-async function apiUpdateTicketStatus(ticketId, status) {
+async function apiUpdateTicketStatus(ticketId, status, staffNote = '') {
   const response = await apiCall(`/tickets/${ticketId}/status`, {
     method: 'PATCH',
-    body: { status }
+    body: { status, staffNote }
   });
   return response;
 }
@@ -295,10 +475,14 @@ function isBuiltInBackendUser(row) {
 
 function isMarkedDeletedBackendUser(row) {
   try {
-    const raw = localStorage.getItem('deletedUsers');
-    if (!raw) return false;
-    const list = JSON.parse(raw);
-    if (!Array.isArray(list)) return false;
+    const deletedRaw = localStorage.getItem('deletedUsers');
+    const archivedRaw = localStorage.getItem('archivedUsers');
+    const deleted = deletedRaw ? JSON.parse(deletedRaw) : [];
+    const archived = archivedRaw ? JSON.parse(archivedRaw) : [];
+    const list = []
+      .concat(Array.isArray(deleted) ? deleted : [])
+      .concat(Array.isArray(archived) ? archived : []);
+    if (!Array.isArray(list) || !list.length) return false;
 
     const markers = list.map((x) => String(x || '').toLowerCase());
     const id = String(row?.id || '').toLowerCase();
@@ -324,10 +508,7 @@ function mergeUsersFromBackendRows(rows) {
       return;
     }
 
-    // Only filter deleted users if they're NOT students from backend
-    // Backend students should always be shown (they're the source of truth)
-    const isBackendStudent = row.role === 'student' || row.role === 'Student';
-    if (!isBackendStudent && isMarkedDeletedBackendUser(row)) {
+    if (isMarkedDeletedBackendUser(row)) {
       return;
     }
 

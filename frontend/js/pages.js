@@ -5,6 +5,9 @@ function showPage(id) {
   if (currentRole === 'student' && typeof syncCurrentUserWithSaved === 'function') {
     syncCurrentUserWithSaved();
   }
+  if (typeof normalizeAllTickets === 'function') {
+    normalizeAllTickets();
+  }
   
   currentPageId = id;
   activeFilter = 'All';
@@ -96,7 +99,7 @@ function renderStudentDash() {
             } catch (e) {}
 
             // Update local cache
-            try { TICKETS = rows; saveTickets(); } catch (e) {}
+            try { TICKETS = rows.map((row) => normalizeTicket(row)); saveTickets(); } catch (e) {}
           })
           .catch(function () {
             // ignore backend errors; keep local tickets
@@ -257,7 +260,7 @@ function renderMyTickets() {
 
             // Optionally update local cache
             try {
-              TICKETS = rows;
+              TICKETS = rows.map((row) => normalizeTicket(row));
               saveTickets();
             } catch (e) {}
           })
@@ -382,11 +385,13 @@ function markStaffNotificationsAsRead() {
 
 /* ── DEPT PAGES ── */
 function renderAccDash() {
-  return deptDash('Accounting Dashboard', 'Manage financial concerns — ' + TICKETS.filter((t) => t.dept === 'Accounting' && t.status === 'Pending').length + ' pending', TICKETS.filter((t) => t.dept === 'Accounting'), 'a-notifs');
+  const accountingTickets = ticketsForDept('Accounting');
+  return deptDash('Accounting Dashboard', 'Manage financial concerns - ' + accountingTickets.filter((t) => t.status === 'Pending').length + ' pending', accountingTickets, 'a-notifs');
 }
 
 function renderRegDash() {
-  return deptDash('Registrar Dashboard', 'Manage academic record concerns — ' + TICKETS.filter((t) => t.dept === 'Registrar' && t.status === 'Pending').length + ' pending', TICKETS.filter((t) => t.dept === 'Registrar'), 'r-notifs');
+  const registrarTickets = ticketsForDept('Registrar');
+  return deptDash('Registrar Dashboard', 'Manage academic record concerns - ' + registrarTickets.filter((t) => t.status === 'Pending').length + ' pending', registrarTickets, 'r-notifs');
 }
 
 function deptDash(title, sub, tickets, notifsPageId = '') {
@@ -407,9 +412,10 @@ function deptDash(title, sub, tickets, notifsPageId = '') {
 }
 
 function renderAccConcerns() {
-  const my = TICKETS.filter((t) => t.dept === 'Accounting');
+  const my = ticketsForDept('Accounting');
   const newCount = my.filter((t) => t.status === 'Pending').length;
-  return `<div><div class="page-hdr"><div><div class="page-title">Financial Concerns</div><div class="page-sub">${my.length} total · <span style="color:#92600a;font-weight:700;">${newCount} pending</span></div></div></div>
+  refreshDepartmentTicketsFromBackend('Accounting', 'a-concerns');
+  return `<div><div class="page-hdr"><div><div class="page-title">Financial Concerns</div><div class="page-sub">${my.length} total Â· <span style="color:#92600a;font-weight:700;">${newCount} pending</span></div></div></div>
   <div style="margin-bottom:12px;">${[
     { label: 'All', value: 'All' },
     { label: 'Tuition', value: 'Tuition payment' },
@@ -427,9 +433,10 @@ function renderAccConcerns() {
 }
 
 function renderRegConcerns() {
-  const my = TICKETS.filter((t) => t.dept === 'Registrar');
+  const my = ticketsForDept('Registrar');
   const newCount = my.filter((t) => t.status === 'Pending').length;
-  return `<div><div class="page-hdr"><div><div class="page-title">Academic Concerns</div><div class="page-sub">${my.length} total · <span style="color:#92600a;font-weight:700;">${newCount} pending</span></div></div></div>
+  refreshDepartmentTicketsFromBackend('Registrar', 'r-concerns');
+  return `<div><div class="page-hdr"><div><div class="page-title">Academic Concerns</div><div class="page-sub">${my.length} total Â· <span style="color:#92600a;font-weight:700;">${newCount} pending</span></div></div></div>
   <div style="margin-bottom:12px;">${[
     { label: 'All', value: 'All' },
     { label: 'Enrollment', value: 'Enrollment issues' },
@@ -446,8 +453,42 @@ function renderRegConcerns() {
   </div></div>`;
 }
 
+function refreshDepartmentTicketsFromBackend(dept, pageId) {
+  if (typeof apiGetTickets !== 'function') {
+    return;
+  }
+
+  setTimeout(() => {
+    apiGetTickets()
+      .then((rows) => {
+        if (!Array.isArray(rows)) return;
+        TICKETS = rows.map((row) => normalizeTicket(row));
+        saveTickets();
+
+        if (currentPageId === pageId) {
+          const data = ticketsForDept(dept);
+          const table = document.getElementById('tbl-container');
+          if (table) table.innerHTML = filterTbl(data, true, true);
+          const sub = document.querySelector('#main .page-hdr .page-sub');
+          if (sub) {
+            const pending = data.filter((t) => t.status === 'Pending').length;
+            sub.innerHTML = `${data.length} total Â· <span style="color:#92600a;font-weight:700;">${pending} pending</span>`;
+          }
+          updateFilterBadge(pageId, data);
+        }
+      })
+      .catch(() => {
+        // Keep local tickets when the backend is unavailable.
+      });
+  }, 0);
+}
+
 function renderReports(dept) {
-  const deptTickets = TICKETS.filter((t) => t.dept === dept);
+  const deptTickets = ticketsForDept(dept);
+  return renderDepartmentReportsFromTickets(dept, deptTickets);
+}
+
+function renderDepartmentReportsFromTickets(dept, deptTickets) {
   const monthKey = new Date().toISOString().slice(0, 7);
   const totalThisMonth = deptTickets.filter((t) => String(t.date || '').slice(0, 7) === monthKey).length;
   const resolvedCount = deptTickets.filter((t) => t.status === 'Resolved').length;

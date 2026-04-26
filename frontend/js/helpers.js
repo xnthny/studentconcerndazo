@@ -1,6 +1,7 @@
 // Helper functions and utilities
 
 function badge(s) {
+  s = getTicketStatus({ status: s });
   const m = {
     Pending: 'badge-pending',
     'In Progress': 'badge-progress',
@@ -8,6 +9,143 @@ function badge(s) {
     Rejected: 'badge-rejected'
   };
   return `<span class="badge ${m[s] || 'badge-pending'}">${s}</span>`;
+}
+
+function getTicketStatus(ticket) {
+  const raw = String((ticket && ticket.status) || '').trim();
+  if (/^in\s*progress$/i.test(raw)) return 'In Progress';
+  if (/^resolved$/i.test(raw)) return 'Resolved';
+  if (/^rejected$/i.test(raw)) return 'Rejected';
+  return raw || 'Pending';
+}
+
+function getLocalTicketStatusOverrides() {
+  try {
+    const raw = localStorage.getItem('ticketStatusOverrides');
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function setLocalTicketStatusOverride(ticket, status) {
+  const id = getTicketOpenId(ticket);
+  if (!id) return;
+
+  try {
+    const map = getLocalTicketStatusOverrides();
+    map[id] = {
+      status: getTicketStatus({ status }),
+      updatedAt: new Date().toISOString()
+    };
+    localStorage.setItem('ticketStatusOverrides', JSON.stringify(map));
+  } catch (e) {}
+}
+
+function applyLocalTicketStatusOverride(ticket) {
+  const id = getTicketOpenId(ticket);
+  if (!id) return ticket;
+
+  const map = getLocalTicketStatusOverrides();
+  const override = map[id];
+  if (override && override.status) {
+    ticket.status = getTicketStatus(override);
+    ticket.statusUpdatedAt = override.updatedAt || ticket.statusUpdatedAt;
+  }
+  return ticket;
+}
+
+function getTicketDept(ticket) {
+  const raw = String((ticket && (ticket.dept || ticket.department)) || '').trim();
+  if (/^accounting$/i.test(raw)) return 'Accounting';
+  if (/^registrar$/i.test(raw)) return 'Registrar';
+  if (/^others?$/i.test(raw)) return 'Others';
+  return raw;
+}
+
+function getTicketOpenId(ticket) {
+  return String((ticket && (ticket.id || ticket.ticket_number || ticket.ticketNumber)) || '').trim();
+}
+
+function getTicketDisplayNumber(ticket) {
+  const number = String((ticket && (ticket.ticket_number || ticket.ticketNumber)) || '').trim();
+  if (number) return number;
+
+  const raw = String((ticket && ticket.id) || '').trim();
+  if (!raw) return '—';
+
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRe.test(raw)) {
+    return 'TKT-' + raw.slice(0, 6).toUpperCase();
+  }
+
+  return raw;
+}
+
+function formatTicketDate(value, includeTime = false) {
+  const raw = String(value || '').trim();
+  if (!raw) return '—';
+
+  const dt = new Date(raw);
+  if (Number.isNaN(dt.getTime())) {
+    return raw.length > 10 ? raw.slice(0, 10) : raw;
+  }
+
+  const opts = {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  };
+
+  if (includeTime) {
+    opts.hour = 'numeric';
+    opts.minute = '2-digit';
+  }
+
+  return dt.toLocaleString('en-US', opts);
+}
+
+function normalizeTicket(ticket) {
+  if (!ticket || typeof ticket !== 'object') return ticket;
+
+  const dept = getTicketDept(ticket);
+  if (dept) {
+    ticket.dept = dept;
+    ticket.department = dept;
+  }
+
+  if (!ticket.date && (ticket.created_at || ticket.createdAt)) {
+    ticket.date = ticket.created_at || ticket.createdAt;
+  }
+
+  if (!Array.isArray(ticket.replies)) {
+    ticket.replies = [];
+  }
+  if (!Array.isArray(ticket.attachments)) {
+    ticket.attachments = [];
+  }
+
+  return applyLocalTicketStatusOverride(ticket);
+}
+
+function normalizeAllTickets() {
+  if (!Array.isArray(TICKETS)) {
+    TICKETS = [];
+    return TICKETS;
+  }
+  TICKETS = TICKETS.map((ticket) => normalizeTicket(ticket)).filter(Boolean);
+  return TICKETS;
+}
+
+function ticketsForDept(dept) {
+  normalizeAllTickets();
+  return TICKETS.filter((ticket) => getTicketDept(ticket) === dept);
+}
+
+function canCurrentRoleManageTicket(ticket) {
+  const dept = getTicketDept(ticket);
+  return (currentRole === 'accounting' && dept === 'Accounting') || (currentRole === 'registrar' && dept === 'Registrar');
 }
 
 function isCurrentStudentTicket(t) {
@@ -197,29 +335,13 @@ function tbl(tickets, showStu = true, showDeptInfo = false) {
   ${tickets
     .map((t) => {
       // Normalize fields with safe fallbacks for backend rows that may differ in shape
-      const ticketNumber = String((t && (t.ticket_number || t.ticketNumber)) || '').trim();
-      const idVal = String((t && t.id) || '').trim();
-      const openId = idVal || ticketNumber || '';
-      // Display prefers `ticket_number`; if absent, show a shortened UUID or id
-      const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-      const tidDisplay = ticketNumber || (uuidRe.test(idVal) ? idVal.slice(0, 8) + '…' : idVal);
+      const openId = getTicketOpenId(t);
+      const tidDisplay = getTicketDisplayNumber(t);
       const category = String((t && (t.category || t.department || t.dept)) || '').trim();
       const subject = String((t && t.subject) || '').trim();
-      const status = String((t && t.status) || '').trim();
+      const status = getTicketStatus(t);
       const rawDate = (t && (t.date || t.created_at || t.createdAt)) || '';
-      let dateDisplay = '';
-      try {
-        if (rawDate) {
-          const dt = new Date(rawDate);
-          if (!isNaN(dt)) dateDisplay = dt.toLocaleDateString();
-          else {
-            const s = String(rawDate || '').trim();
-            dateDisplay = s ? (s.length > 10 ? s.slice(0, 10) : s) : '';
-          }
-        }
-      } catch (e) {
-        dateDisplay = String(rawDate || '');
-      }
+      const dateDisplay = formatTicketDate(rawDate);
 
       return `<tr>
       <td><span style="font-weight:800;color:var(--cg-dark);font-size:12px;">${tidDisplay || '—'}</span></td>
@@ -234,7 +356,7 @@ function tbl(tickets, showStu = true, showDeptInfo = false) {
       <td style="max-width:170px;"><span style="font-weight:500;">${subject || '—'}</span></td>
       <td>${badge(status || 'Pending')}</td>
       <td style="color:var(--n300);font-size:11px;">${dateDisplay}</td>
-      <td><div style="display:flex;gap:6px;justify-content:flex-end;"><button class="btn btn-sm btn-primary" onclick="openTicket('${openId || ''}')">Open</button>${!showStu && currentPageId === 's-tickets' ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteMyTicket('${openId || ''}')">${IC.trash} Delete</button>` : ''}${showStu && currentRole === 'accounting' && (currentPageId === 'a-concerns' || currentPageId === 'a-dash') ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteAccountingConcern('${openId || ''}')">Delete</button>` : ''}</div></td>
+      <td><div style="display:flex;gap:6px;justify-content:flex-end;"><button class="btn btn-sm btn-primary" onclick="openTicket('${openId || ''}')">Open</button>${currentRole === 'admin' && currentPageId === 'ad-tickets' ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteAccountingConcern('${openId || ''}')">Delete</button>` : ''}${!showStu && currentPageId === 's-tickets' && status !== 'Resolved' ? `<button class="btn btn-sm btn-danger" onclick="confirmDeleteMyTicket('${openId || ''}')">${IC.trash} Delete</button>` : ''}</div></td>
     </tr>`;
     })
     .join('')}</tbody></table></div>`;
@@ -258,7 +380,7 @@ function applyFilters(all, options = {}) {
       return cat === key || cat.includes(key);
     });
   }
-  if (activeFilter !== 'All') f = f.filter((t) => t.status === activeFilter);
+  if (activeFilter !== 'All') f = f.filter((t) => getTicketStatus(t) === activeFilter);
   if (searchQuery) {
     const q = String(searchQuery || '').toLowerCase();
     f = f.filter((t) => (String(t.subject || '') + String(t.student || '') + String(t.category || '') + String(t.id || '')).toLowerCase().includes(q));
@@ -293,13 +415,13 @@ function setCategory(cat, pid, sh, sd) {
   const el = document.getElementById('tbl-container');
   if (!el) return;
   const dept = pid === 'a-concerns' ? 'Accounting' : pid === 'r-concerns' ? 'Registrar' : null;
-  let data = dept ? TICKETS.filter((t) => t.dept === dept) : pid === 'ad-tickets' ? TICKETS : getCurrentStudentTickets();
+  let data = dept ? ticketsForDept(dept) : pid === 'ad-tickets' ? TICKETS : getCurrentStudentTickets();
     el.innerHTML = filterTbl(data, sh !== false && sh !== 'false', sd === true || sd === 'true', pid === 's-tickets');
 }
 
 function buildFilterBar(pid, showStu, showDeptInfo = false) {
   const dept = pid === 'a-concerns' ? 'Accounting' : pid === 'r-concerns' ? 'Registrar' : null;
-  const data = dept ? TICKETS.filter((t) => t.dept === dept) : pid === 'ad-tickets' ? TICKETS : getCurrentStudentTickets();
+  const data = dept ? ticketsForDept(dept) : pid === 'ad-tickets' ? TICKETS : getCurrentStudentTickets();
   const count = applyFilters(data, { ignoreCategory: pid === 's-tickets' }).length;
   return `<div class="filter-bar">${['All', 'Pending', 'In Progress', 'Resolved']
     .map((s) => `<button class="filter-btn${activeFilter === s ? ' active' : ''}" onclick="setFilter('${s}','${pid}',${showStu},${showDeptInfo})">${s}</button>`)
@@ -326,7 +448,7 @@ function setFilter(f, pid, sh, sd) {
   const el = document.getElementById('tbl-container');
   if (!el) return;
   const dept = pid === 'a-concerns' ? 'Accounting' : pid === 'r-concerns' ? 'Registrar' : null;
-  let data = dept ? TICKETS.filter((t) => t.dept === dept) : pid === 'ad-tickets' ? TICKETS : getCurrentStudentTickets();
+  let data = dept ? ticketsForDept(dept) : pid === 'ad-tickets' ? TICKETS : getCurrentStudentTickets();
     el.innerHTML = filterTbl(data, sh !== false && sh !== 'false', sd === true || sd === 'true', pid === 's-tickets');
   // Update badge count if present
   try { updateFilterBadge(pid, data); } catch (e) {}
@@ -337,7 +459,7 @@ function setSearch(q, pid, sh, sd) {
   const el = document.getElementById('tbl-container');
   if (!el) return;
   const dept = pid === 'a-concerns' ? 'Accounting' : pid === 'r-concerns' ? 'Registrar' : null;
-  let data = dept ? TICKETS.filter((t) => t.dept === dept) : pid === 'ad-tickets' ? TICKETS : getCurrentStudentTickets();
+  let data = dept ? ticketsForDept(dept) : pid === 'ad-tickets' ? TICKETS : getCurrentStudentTickets();
   // Use filterTbl which applies activeCategory, activeFilter and searchQuery
     el.innerHTML = filterTbl(data, sh !== false && sh !== 'false', sd === true || sd === 'true', pid === 's-tickets');
   try { updateFilterBadge(pid, data); } catch (e) {}
@@ -352,9 +474,9 @@ function updateFilterBadge(pid, data) {
     const d = Array.isArray(data)
       ? data
       : pid === 'a-concerns'
-      ? TICKETS.filter((t) => t.dept === 'Accounting')
+      ? ticketsForDept('Accounting')
       : pid === 'r-concerns'
-      ? TICKETS.filter((t) => t.dept === 'Registrar')
+      ? ticketsForDept('Registrar')
       : pid === 'ad-tickets'
       ? TICKETS
       : getCurrentStudentTickets();

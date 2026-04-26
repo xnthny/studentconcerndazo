@@ -2,6 +2,8 @@
 
 function goRegister() {
   document.getElementById('login-screen').style.display = 'none';
+  const forgot = document.getElementById('forgot-screen');
+  if (forgot) forgot.style.display = 'none';
   document.getElementById('register-screen').style.display = 'flex';
   document.getElementById('reg-err').style.display = 'none';
   document.getElementById('reg-ok').style.display = 'none';
@@ -9,8 +11,209 @@ function goRegister() {
 
 function goLogin() {
   document.getElementById('register-screen').style.display = 'none';
+  const forgot = document.getElementById('forgot-screen');
+  if (forgot) forgot.style.display = 'none';
   document.getElementById('login-screen').style.display = 'flex';
   document.getElementById('login-error').style.display = 'none';
+}
+
+function goForgotPassword() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('register-screen').style.display = 'none';
+  const forgot = document.getElementById('forgot-screen');
+  if (forgot) forgot.style.display = 'flex';
+
+  ['fp-err', 'fp-ok'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.textContent = '';
+      el.style.display = 'none';
+    }
+  });
+
+  const loginId = document.getElementById('login-id')?.value?.trim() || '';
+  const studentId = document.getElementById('fp-student-id');
+  if (studentId && loginId && !getCanonicalStaffKey(loginId)) {
+    studentId.value = loginId;
+  }
+
+  const fields = document.getElementById('fp-reset-fields');
+  if (fields) fields.style.display = 'block';
+}
+
+function setForgotPasswordMessage(type, message) {
+  const errEl = document.getElementById('fp-err');
+  const okEl = document.getElementById('fp-ok');
+  if (errEl) errEl.style.display = 'none';
+  if (okEl) okEl.style.display = 'none';
+
+  const el = type === 'error' ? errEl : okEl;
+  if (!el) return;
+  el.textContent = formatForgotPasswordMessage(message);
+  el.style.display = 'block';
+}
+
+function formatForgotPasswordMessage(value) {
+  if (!value) {
+    return 'Something went wrong. Please try again.';
+  }
+
+  if (typeof value === 'string') {
+    return value;
+  }
+
+  if (value instanceof Error) {
+    return value.message || 'Something went wrong. Please try again.';
+  }
+
+  if (typeof value === 'object') {
+    const candidate = value.message || value.error || value.detail || value.details;
+    if (typeof candidate === 'string') {
+      return candidate;
+    }
+    if (candidate && typeof candidate === 'object') {
+      if (typeof candidate.message === 'string') {
+        return candidate.message;
+      }
+      if (typeof candidate.error === 'string') {
+        return candidate.error;
+      }
+    }
+    try {
+      return JSON.stringify(value);
+    } catch (e) {
+      return 'Something went wrong. Please try again.';
+    }
+  }
+
+  return String(value);
+}
+
+function syncForgotPasswordLocalAccount(username, password, user) {
+  const key = String(user?.username || user?.student_id || username || '').toLowerCase();
+  if (!key) return;
+
+  try {
+    if (typeof loadRegisteredStudents === 'function') {
+      loadRegisteredStudents();
+    }
+
+    const existing = ACCOUNTS[key] || {};
+    const name = user?.full_name || user?.name || existing.name || 'Student';
+    const ini = existing.ini || name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'ST';
+    const account = {
+      ...existing,
+      password,
+      role: 'student',
+      name,
+      id: user?.student_id || existing.id || key,
+      ini,
+      bg: existing.bg || 'rgba(26,162,96,0.2)',
+      col: existing.col || '#1AA260',
+      isNew: existing.isNew !== undefined ? existing.isNew : false,
+      course: user?.course || existing.course || '',
+      year: user?.year_level || user?.year || existing.year || '',
+      email: user?.email || existing.email || ''
+    };
+
+    if (typeof saveStudentRegistration === 'function') {
+      saveStudentRegistration(key, account, String(username || '').toLowerCase() !== key ? String(username || '').toLowerCase() : undefined);
+    } else {
+      ACCOUNTS[key] = account;
+    }
+  } catch (e) {
+    console.error('Failed to sync reset password locally:', e);
+  }
+}
+
+async function sendForgotPasswordOtp() {
+  const username = document.getElementById('fp-student-id')?.value?.trim().toLowerCase() || '';
+  const btn = document.getElementById('fp-send-btn');
+  const fields = document.getElementById('fp-reset-fields');
+
+  if (!username) {
+    setForgotPasswordMessage('error', 'Enter your Student ID or registered university email first.');
+    return;
+  }
+
+  if (getCanonicalStaffKey(username)) {
+    setForgotPasswordMessage('error', 'Password reset is only for student accounts.');
+    return;
+  }
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Sending...';
+    }
+    setForgotPasswordMessage('ok', 'Sending OTP...');
+    const response = await apiSendPasswordResetOtp(username);
+    if (fields) fields.style.display = 'block';
+    if (response && response.devOtp) {
+      setForgotPasswordMessage('ok', `Development OTP: ${response.devOtp}. Use this code to continue.`);
+    } else {
+      setForgotPasswordMessage('ok', 'OTP sent to your registered university email. Check your inbox or Junk Email folder.');
+    }
+    const codeEl = document.getElementById('fp-code');
+    if (codeEl) codeEl.focus();
+  } catch (err) {
+    setForgotPasswordMessage('error', err || 'Failed to send OTP.');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Send OTP';
+    }
+  }
+}
+
+async function resetForgotPassword() {
+  const username = document.getElementById('fp-student-id')?.value?.trim().toLowerCase() || '';
+  const code = document.getElementById('fp-code')?.value?.trim() || '';
+  const pw = document.getElementById('fp-pw')?.value || '';
+  const pw2 = document.getElementById('fp-pw2')?.value || '';
+  const btn = document.getElementById('fp-reset-btn');
+
+  if (!username || !code || !pw || !pw2) {
+    setForgotPasswordMessage('error', 'Fill in the Student ID, OTP, and new password fields.');
+    return;
+  }
+  if (!/^[0-9]{8}$/.test(code)) {
+    setForgotPasswordMessage('error', 'Enter the 8-digit OTP sent to your university email.');
+    return;
+  }
+  if (pw.length < 6) {
+    setForgotPasswordMessage('error', 'Password must be at least 6 characters.');
+    return;
+  }
+  if (pw !== pw2) {
+    setForgotPasswordMessage('error', 'Passwords do not match.');
+    return;
+  }
+
+  try {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Resetting...';
+    }
+    setForgotPasswordMessage('ok', 'Verifying OTP...');
+    const response = await apiVerifyPasswordResetOtp(username, code, pw);
+    syncForgotPasswordLocalAccount(username, pw, response?.user);
+    setForgotPasswordMessage('ok', 'Password reset successful. Redirecting to sign in...');
+    setTimeout(() => {
+      goLogin();
+      const loginId = document.getElementById('login-id');
+      const loginPw = document.getElementById('login-pw');
+      if (loginId) loginId.value = String(response?.user?.username || response?.user?.student_id || username).toLowerCase();
+      if (loginPw) loginPw.value = '';
+    }, 900);
+  } catch (err) {
+    setForgotPasswordMessage('error', err || 'Password reset failed.');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = 'Reset Password';
+    }
+  }
 }
 
 let presenceHeartbeatInterval = null;
@@ -124,6 +327,48 @@ function setCurrentUserInactiveSession() {
   }
 }
 
+function clearPasswordMismatchError() {
+  const pwEl = document.getElementById('r-pw');
+  const pw2El = document.getElementById('r-pw2');
+  const matchEl = document.getElementById('r-pw-match-error');
+
+  if (pwEl) pwEl.classList.remove('field-invalid');
+  if (pw2El) pw2El.classList.remove('field-invalid');
+  if (matchEl) matchEl.style.display = 'none';
+}
+
+function showPasswordMismatchError() {
+  const errEl = document.getElementById('reg-err');
+  const pwEl = document.getElementById('r-pw');
+  const pw2El = document.getElementById('r-pw2');
+  const matchEl = document.getElementById('r-pw-match-error');
+
+  if (pwEl) pwEl.classList.add('field-invalid');
+  if (pw2El) {
+    pw2El.classList.add('field-invalid');
+    pw2El.focus();
+  }
+  if (matchEl) matchEl.style.display = 'block';
+  if (errEl) {
+    errEl.textContent = 'Passwords do not match. Please make both password fields the same.';
+    errEl.style.display = 'block';
+  }
+}
+
+try {
+  ['r-pw', 'r-pw2'].forEach((id) => {
+    const input = document.getElementById(id);
+    if (!input) return;
+    input.addEventListener('input', () => {
+      const pw = document.getElementById('r-pw')?.value || '';
+      const pw2 = document.getElementById('r-pw2')?.value || '';
+      if (!pw || !pw2 || pw === pw2) {
+        clearPasswordMismatchError();
+      }
+    });
+  });
+} catch (e) {}
+
 function doRegister() {
   const fn = document.getElementById('r-fn').value.trim();
   const ln = document.getElementById('r-ln').value.trim();
@@ -137,6 +382,7 @@ function doRegister() {
   const okEl = document.getElementById('reg-ok');
   errEl.style.display = 'none';
   okEl.style.display = 'none';
+  clearPasswordMismatchError();
   if (!fn || !ln || !sid || !email || !course || !year || !pw || !pw2) {
     errEl.textContent = '✕ Please fill in all required fields.';
     errEl.style.display = 'block';
@@ -148,8 +394,7 @@ function doRegister() {
     return;
   }
   if (pw !== pw2) {
-    errEl.textContent = '✕ Passwords do not match. Please try again.';
-    errEl.style.display = 'block';
+    showPasswordMismatchError();
     return;
   }
 
@@ -230,6 +475,7 @@ async function sendOtpFromForm() {
   const okEl = document.getElementById('reg-ok');
   errEl.style.display = 'none';
   okEl.style.display = 'none';
+  clearPasswordMismatchError();
 
   if (!fn || !ln || !sid || !email || !pw || !pw2) {
     errEl.textContent = '✕ Please fill First Name, Last Name, Student ID, Email and Password before sending OTP.';
@@ -242,8 +488,7 @@ async function sendOtpFromForm() {
     return;
   }
   if (pw !== pw2) {
-    errEl.textContent = '✕ Passwords do not match. Please try again.';
-    errEl.style.display = 'block';
+    showPasswordMismatchError();
     return;
   }
 
@@ -389,18 +634,19 @@ function doLogin() {
     errEl.style.display = 'block';
     errEl.textContent = '✕ This account has been permanently deleted.';
     document.getElementById('login-pw').value = '';
+    errEl.textContent = 'Error: This account has been permanently deleted.';
     return;
   }
 
-  // Try backend API first using backendRequest helper, fallback to local auth
-  if (typeof backendRequest === 'function') {
-    // Use the originally typed username for backend auth attempts
-    backendRequest('/auth/login', { method: 'POST', body: { username: uname, password: pw } })
+  // Prefer the structured API helper so invalid credentials stop cleanly
+  if (typeof apiLogin === 'function') {
+    apiLogin(uname, pw)
       .then((response) => {
         if (typeof isDeletedUserRecord === 'function' && isDeletedUserRecord(response.user, uname)) {
           errEl.style.display = 'block';
           errEl.textContent = '✕ This account has been permanently deleted.';
           document.getElementById('login-pw').value = '';
+          errEl.textContent = 'Error: This account has been permanently deleted.';
           if (typeof apiLogout !== 'undefined') {
             apiLogout();
           }
@@ -511,23 +757,29 @@ function doLogin() {
         }
       })
       .catch((error) => {
-        // Fallback to local authentication when backend is unreachable or errors
-        console.warn('Backend login failed, falling back to local auth:', error && error.message ? error.message : error);
-        doLoginLocal(accountKey, pw, errEl);
+        if (shouldFallbackToLocalAuth(error)) {
+          console.warn('Backend login unavailable, falling back to local auth:', error && error.message ? error.message : error);
+          doLoginLocal(accountKey, pw, errEl);
+          return;
+        }
+        errEl.style.display = 'block';
+        errEl.textContent = 'âœ• ' + getLoginFailureMessage(uname);
+        document.getElementById('login-pw').value = '';
+        errEl.textContent = 'Error: ' + getLoginFailureMessage(uname);
       });
     return;
   }
 
-  // If backendRequest helper not available, fallback to existing apiLogin or local auth
-  if (typeof apiLogin !== 'undefined') {
-    // When using the apiLogin helper, also send the originally typed username
-    apiLogin(uname, pw)
+  // Legacy fallback if the structured API helper is unavailable
+  if (typeof backendRequest !== 'undefined') {
+    backendRequest('/auth/login', { method: 'POST', body: { username: uname, password: pw } })
       .then((response) => {
         // reuse existing success handling (delegate to original flow)
         if (typeof isDeletedUserRecord === 'function' && isDeletedUserRecord(response.user, uname)) {
           errEl.style.display = 'block';
           errEl.textContent = '✕ This account has been permanently deleted.';
           document.getElementById('login-pw').value = '';
+          errEl.textContent = 'Error: This account has been permanently deleted.';
           if (typeof apiLogout !== 'undefined') {
             apiLogout();
           }
@@ -638,13 +890,50 @@ function doLogin() {
         }
       })
       .catch((error) => {
-        // Fallback to local authentication
-        doLoginLocal(accountKey, pw, errEl);
+        if (shouldFallbackToLocalAuth(error)) {
+          doLoginLocal(accountKey, pw, errEl);
+          return;
+        }
+        errEl.style.display = 'block';
+        errEl.textContent = 'âœ• ' + getLoginFailureMessage(uname);
+        document.getElementById('login-pw').value = '';
+        errEl.textContent = 'Error: ' + getLoginFailureMessage(uname);
       });
   } else {
     // Use local authentication
     doLoginLocal(accountKey, pw, errEl);
   }
+}
+
+function getLoginFailureMessage(username) {
+  const key = typeof getCanonicalStaffKey === 'function' ? getCanonicalStaffKey(username) : '';
+  return key ? 'Invalid username or password.' : 'Invalid Student ID or password.';
+}
+
+function shouldFallbackToLocalAuth(error) {
+  if (!error) {
+    return true;
+  }
+
+  if (error instanceof TypeError) {
+    return true;
+  }
+
+  const status = Number(error.status || 0);
+  if (!status) {
+    return true;
+  }
+
+  if (status === 404) {
+    return true;
+  }
+
+  const message = String(error.message || '').toLowerCase();
+  return (
+    message.includes('could not reach backend') ||
+    message.includes('backend route is not available') ||
+    message.includes('server currently handling your request')
+  );
 }
 
 function doLoginLocal(uname, pw, errEl) {
@@ -667,19 +956,29 @@ function doLoginLocal(uname, pw, errEl) {
     errEl.style.display = 'block';
     errEl.textContent = '✕ This account has been permanently deleted.';
     document.getElementById('login-pw').value = '';
+    errEl.textContent = 'Error: This account has been permanently deleted.';
     return;
   }
   
   const acc = ACCOUNTS[uname];
   const role = String(acc?.role || '').toLowerCase();
-  const overridePw = (['accounting', 'registrar', 'admin'].includes(role) && typeof getStaffPasswordOverride === 'function')
-    ? getStaffPasswordOverride(uname)
-    : '';
-  const expectedPw = overridePw || String(acc?.password || '');
+  if (['accounting', 'registrar', 'admin'].includes(role) && typeof isLegacyStaffPassword === 'function' && isLegacyStaffPassword(uname, pw)) {
+    errEl.style.display = 'block';
+    errEl.textContent = '✕ ' + getLoginFailureMessage(uname);
+    document.getElementById('login-pw').value = '';
+    errEl.textContent = 'Error: ' + getLoginFailureMessage(uname);
+    console.error('Blocked legacy staff password for:', uname);
+    return;
+  }
+
+  const expectedPw = (['accounting', 'registrar', 'admin'].includes(role) && typeof getStaffExpectedPassword === 'function')
+    ? getStaffExpectedPassword(uname)
+    : String(acc?.password || '');
   if (!acc || expectedPw !== pw) {
     errEl.style.display = 'block';
-    errEl.textContent = '✕ Invalid Student ID or password.';
+    errEl.textContent = '✕ ' + getLoginFailureMessage(uname);
     document.getElementById('login-pw').value = '';
+    errEl.textContent = 'Error: ' + getLoginFailureMessage(uname);
     console.error('Login failed for:', uname);
     return;
   }

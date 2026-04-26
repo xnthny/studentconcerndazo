@@ -1,16 +1,21 @@
 // Tickets module
 
 function openTicket(id) {
-  const t = TICKETS.find((x) => x.id === id);
+  normalizeAllTickets();
+  const t = TICKETS.find((x) => getTicketOpenId(x) === String(id || ''));
   if (!t) return;
-  const isStaff = currentRole !== 'student',
-    isRes = t.status === 'Resolved';
-  const canReply = !isRes && (currentRole === 'student' || currentRole === 'accounting' || currentRole === 'registrar');
-  const canDeleteAccountingConcern = currentRole === 'accounting' && t.dept === 'Accounting';
+  const dept = getTicketDept(t) || 'Unassigned';
+  const displayNumber = getTicketDisplayNumber(t);
+  const filedDate = formatTicketDate(t.date || t.created_at || t.createdAt, true);
+  const status = getTicketStatus(t);
+  const isStaff = canCurrentRoleManageTicket(t),
+    isRes = status === 'Resolved';
+  const canManageTicket = canCurrentRoleManageTicket(t);
+  const canReply = !isRes && (currentRole === 'student' || canManageTicket);
   const sInfo = typeof getTicketStudentInfo === 'function' ? getTicketStudentInfo(t) : getStudentInfo(t.student);
   document.getElementById('main').innerHTML = `<div>
   <button class="back-btn" onclick="showPage('${currentPageId}')">${IC.arrow} Back to list</button>
-  <div class="page-hdr"><div><div class="page-title">${t.subject}</div><div class="page-sub" style="display:flex;align-items:center;gap:8px;margin-top:4px;"><span style="font-weight:700;color:var(--cg-dark);">${t.id}</span><span style="color:var(--n300);">·</span><span>${t.dept}</span><span style="color:var(--n300);">·</span><span>${t.category}</span></div></div><div style="display:flex;align-items:center;gap:8px;">${badge(t.status)}</div></div>
+  <div class="page-hdr"><div><div class="page-title">${t.subject}</div><div class="page-sub" style="display:flex;align-items:center;gap:8px;margin-top:4px;"><span style="font-weight:700;color:var(--cg-dark);">${displayNumber}</span><span style="color:var(--n300);">·</span><span>${dept}</span><span style="color:var(--n300);">·</span><span>${t.category}</span></div></div><div style="display:flex;align-items:center;gap:8px;">${badge(status)}</div></div>
   <div class="two-col">
     <div>
       <div class="card"><div class="card-title">Conversation Thread</div><div class="thread" id="thread-body">${renderThread(t)}</div>${canReply ? `<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--n100);"><div style="font-size:14px;font-weight:700;color:var(--n700);margin-bottom:10px;">Send a Reply</div><textarea class="fi" id="reply-txt" rows="3" style="margin-bottom:10px;" placeholder="Type your message…"></textarea><input type="file" id="reply-file" style="display:none;" onchange="handleReplyFileUpload(event,'${t.id}')"/><div style="display:flex;gap:8px;"><button class="btn btn-primary" onclick="sendReply('${t.id}')"><span style="display:inline-flex;width:16px;height:16px;">${IC.send}</span> Send Reply</button><button class="btn" onclick="openReplyFilePicker()">Attach File</button></div></div>` : ''}</div>
@@ -18,39 +23,40 @@ function openTicket(id) {
     </div>
     <div>
       <div class="card"><div class="card-title">Ticket Information</div><table class="info-tbl">${[
-        ['Ticket #', `<span style="font-weight:800;color:var(--cg-dark);">${t.id}</span>`],
-        ['Status', badge(t.status)],
-        ['Department', t.dept],
+        ['Ticket #', `<span style="font-weight:800;color:var(--cg-dark);">${displayNumber}</span>`],
+        ['Status', badge(status)],
+        ['Department', dept],
         ['Category', t.category],
         ['Submitted by', (typeof studentDisplayName === 'function' ? studentDisplayName(t.student) : t.student)],
         ...(isStaff && sInfo.course ? [['Course', sInfo.course], ['Year Level', sInfo.year || '—']] : isStaff ? [['Course', '—']] : []),
-        ['Date Filed', t.date]
+        ['Date Filed', filedDate]
       ]
         .map(([l, v]) => `<tr><td>${l}</td><td>${v}</td></tr>`)
-        .join('')}</table>${!isStaff ? `<div style="margin-top:12px;"><button class="btn btn-danger btn-sm" onclick="confirmDeleteMyTicket('${t.id}')">Delete Ticket</button></div>` : ''}</div>
-      ${isStaff ? `<div class="card"><div class="card-title">Update Status</div><select class="status-sel" id="status-upd">${['Pending', 'In Progress', 'Resolved'].map((s) => `<option${s === t.status ? ' selected' : ''}>${s}</option>`).join('')}</select><textarea class="fi" rows="2" style="margin-bottom:10px;" id="status-note" placeholder="Staff note (optional)…"></textarea><button class="btn btn-primary" style="width:100%;" onclick="updateTicketStatus('${t.id}')">Update Status</button>${canDeleteAccountingConcern ? `<button class="btn btn-danger" style="width:100%;margin-top:8px;" onclick="confirmDeleteAccountingConcern('${t.id}')">Delete Concern</button>` : ''}</div>` : ''}
+        .join('')}</table>${currentRole === 'student' && status !== 'Resolved' ? `<div style="margin-top:12px;"><button class="btn btn-danger btn-sm" onclick="confirmDeleteMyTicket('${t.id}')">Delete Ticket</button></div>` : ''}${currentRole === 'student' && status === 'Resolved' ? `<div style="margin-top:12px;font-size:12px;line-height:1.5;color:var(--n500);">Resolved concerns are kept in your concern history and cannot be deleted.</div>` : ''}</div>
+      ${isStaff ? `<div class="card"><div class="card-title">Update Status</div><select class="status-sel" id="status-upd">${['Pending', 'In Progress', 'Resolved'].map((s) => `<option${s === getTicketStatus(t) ? ' selected' : ''}>${s}</option>`).join('')}</select><textarea class="fi" rows="2" style="margin-bottom:10px;" id="status-note" placeholder="Staff note (optional)…"></textarea><button class="btn btn-primary" style="width:100%;" onclick="updateTicketStatus('${t.id}')">Update Status</button></div>` : ''}
     </div>
   </div></div>`;
 }
 
 function confirmDeleteAccountingConcern(id) {
-  if (currentRole !== 'accounting') return;
-  const t = TICKETS.find((x) => x.id === id && x.dept === 'Accounting');
+  if (currentRole !== 'admin') return;
+  normalizeAllTickets();
+  const t = TICKETS.find((x) => getTicketOpenId(x) === String(id || ''));
   if (!t) return;
 
   openModal(
     'Delete Concern',
     `Delete ticket ${t.id}?`,
-    '<div style="padding:6px 0;color:#b91c1c;font-size:13px;line-height:1.6;">This will permanently remove this concern from Accounting records.</div>',
+    '<div style="padding:6px 0;color:#b91c1c;font-size:13px;line-height:1.6;">This will permanently remove this concern from records. Only administrators can do this.</div>',
     `<button class="btn" onclick="closeModalNow()">Cancel</button><button class="btn btn-danger" onclick="deleteAccountingConcern('${t.id}')">Delete</button>`
   );
 }
 
 function deleteAccountingConcern(id) {
-  if (currentRole !== 'accounting') return;
+  if (currentRole !== 'admin') return;
 
   const before = TICKETS.length;
-  TICKETS = TICKETS.filter((t) => !(t.id === id && t.dept === 'Accounting'));
+  TICKETS = TICKETS.filter((t) => getTicketOpenId(t) !== String(id || ''));
   if (TICKETS.length === before) {
     closeModalNow();
     toast('Concern not found', 'error');
@@ -75,8 +81,13 @@ function deleteAccountingConcern(id) {
 }
 
 function confirmDeleteMyTicket(id) {
-  const ticket = TICKETS.find((x) => x.id === id);
+  normalizeAllTickets();
+  const ticket = TICKETS.find((x) => getTicketOpenId(x) === String(id || ''));
   if (!ticket || currentRole !== 'student') return;
+  if (getTicketStatus(ticket) === 'Resolved') {
+    toast('Resolved concerns are kept in your concern history and cannot be deleted.', 'error');
+    return;
+  }
 
   openModal(
     'Delete Ticket',
@@ -89,8 +100,16 @@ function confirmDeleteMyTicket(id) {
 function deleteMyTicket(id) {
   if (currentRole !== 'student') return;
 
+  normalizeAllTickets();
+  const existing = TICKETS.find((ticket) => getTicketOpenId(ticket) === String(id || '') && isCurrentStudentTicket(ticket));
+  if (existing && getTicketStatus(existing) === 'Resolved') {
+    closeModalNow();
+    toast('Resolved concerns are kept in your concern history and cannot be deleted.', 'error');
+    return;
+  }
+
   const beforeCount = TICKETS.length;
-    TICKETS = TICKETS.filter((ticket) => !(ticket.id === id && isCurrentStudentTicket(ticket)));
+  TICKETS = TICKETS.filter((ticket) => !(getTicketOpenId(ticket) === String(id || '') && isCurrentStudentTicket(ticket)));
 
   if (TICKETS.length === beforeCount) {
     closeModalNow();
@@ -338,18 +357,46 @@ function handleReplyFileUpload(event, id) {
 }
 
 function updateTicketStatus(id) {
-  const t = TICKETS.find((x) => x.id === id);
+  const t = TICKETS.find((x) => getTicketOpenId(x) === String(id || ''));
   if (!t) return;
+  if (!canCurrentRoleManageTicket(t)) {
+    toast('Only the assigned department can update this concern.', 'error');
+    return;
+  }
   const nextStatus = document.getElementById('status-upd').value;
+  const note = document.getElementById('status-note').value.trim();
   if (t.status !== nextStatus) {
     t.statusUpdatedAt = new Date().toISOString();
   }
   t.status = nextStatus;
-  const note = document.getElementById('status-note').value.trim();
+  setLocalTicketStatusOverride(t, nextStatus);
   if (note) t.replies.push({ from: 'staff', senderRole: currentRole, text: note, date: new Date().toISOString() });
   saveTickets();
-  toast(`Status updated to "${t.status}"`);
-  openTicket(id);
+
+  const finish = () => {
+    toast(`Status updated to "${t.status}"`);
+    openTicket(id);
+  };
+
+  if (typeof apiUpdateTicketStatus === 'function' && t.id) {
+    apiUpdateTicketStatus(t.id, nextStatus, note)
+      .then((updated) => {
+        if (updated && typeof updated === 'object') {
+          normalizeTicket(updated);
+          t.status = getTicketStatus(updated);
+          t.statusUpdatedAt = updated.updated_at || updated.updatedAt || t.statusUpdatedAt;
+          saveTickets();
+        }
+        finish();
+      })
+      .catch((error) => {
+        console.warn('Backend status sync failed; kept local status:', error && error.message ? error.message : error);
+        finish();
+      });
+    return;
+  }
+
+  finish();
 }
 
 function rateStar(v) {

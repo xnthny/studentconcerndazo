@@ -34,12 +34,57 @@
         </button>
       </div>
     </div>
+    <div class="auth-foot" style="text-align:right;margin:-4px 0 12px;"><a onclick="goForgotPassword()" style="cursor:pointer;">Forgot password?</a></div>
     <button class="btn-main" onclick="doLogin()" type="button">Sign In</button>
     <button class="btn-sec" onclick="goRegister()" type="button">Register</button>
   </div>
 </div>
 
 <!-- ══ REGISTER ══ -->
+<!-- FORGOT PASSWORD -->
+<div id="forgot-screen" class="auth-bg" style="display:none;">
+  <div class="auth-card" style="width:430px;max-width:100%;">
+    <div class="auth-logo">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--cg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3L2 8l10 5 10-5-10-5z"/><path d="M2 16l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+    </div>
+    <div class="auth-title">Reset Student Password</div>
+    <div class="auth-sub">Use your Student ID or registered university email. The OTP will be sent to that university email.</div>
+    <div class="auth-divider"></div>
+    <div class="err-box" id="fp-err"></div>
+    <div class="ok-box" id="fp-ok"></div>
+
+    <div class="fg">
+      <label class="fl">Student ID or University Email</label>
+      <input class="fi" id="fp-student-id" placeholder="Enter your Student ID or university email"/>
+    </div>
+    <button class="btn-sec" id="fp-send-btn" onclick="sendForgotPasswordOtp()" type="button">Send OTP</button>
+
+    <div id="fp-reset-fields" style="display:block;margin-top:14px;">
+      <div class="fg"><label class="fl">One-time code (8 digits)</label><input class="fi" id="fp-code" maxlength="8" inputmode="numeric" pattern="\d{8}" placeholder="Enter 8-digit code"/></div>
+      <div class="fg">
+        <label class="fl">New Password</label>
+        <div class="pw-wrap">
+          <input class="fi" type="password" id="fp-pw" placeholder="Min. 6 characters"/>
+          <button class="pw-eye" onclick="togglePw('fp-pw')" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="fg">
+        <label class="fl">Confirm New Password</label>
+        <div class="pw-wrap">
+          <input class="fi" type="password" id="fp-pw2" placeholder="Re-enter password"/>
+          <button class="pw-eye" onclick="togglePw('fp-pw2')" type="button">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <button class="btn-main" id="fp-reset-btn" onclick="resetForgotPassword()" type="button">Reset Password</button>
+    </div>
+    <div class="auth-foot" style="margin-top:14px;"><a onclick="goLogin()" style="cursor:pointer;">Back to sign in</a></div>
+  </div>
+</div>
+
 <div id="register-screen" class="auth-bg" style="display:none;align-items:flex-start;overflow-y:auto;padding:30px 20px;">
   <div class="auth-card" style="width:480px;max-width:100%;margin:auto;">
     <div class="auth-logo">
@@ -117,6 +162,7 @@
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
+        <div class="field-error" id="r-pw-match-error">Passwords do not match.</div>
       </div>
     </div>
     <button class="btn-main" onclick="doRegister()" type="button">Create My Account</button>
