@@ -4,11 +4,40 @@ const bcrypt = require('bcryptjs');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const router = express.Router();
-const { supabase, supabaseAdmin, supabaseServiceKey, supabaseUrl } = require('../config/supabase');
+const { supabase, supabaseAdmin, supabaseAnonKey, supabaseServiceKey, supabaseUrl } = require('../config/supabase');
 const { generateToken } = require('../middleware/auth');
 
 // In-memory OTP attempt logs (ephemeral; useful for quick diagnostics)
 const otpLogs = [];
+
+const LEGACY_STAFF_PASSWORDS = {
+  accounting: ['AcctDev2024'],
+  registrar: ['RegisDev2024']
+};
+
+function isLegacyStaffPassword(role, password) {
+  const normalizedRole = String(role || '').toLowerCase();
+  return (LEGACY_STAFF_PASSWORDS[normalizedRole] || []).includes(String(password || ''));
+}
+
+function getSmtpConfig() {
+  const user = process.env.SMTP_USER || process.env.BREVO_SMTP_LOGIN || process.env.BREVO_SMTP_USER || '';
+  const pass = process.env.SMTP_PASS || process.env.BREVO_SMTP_KEY || process.env.BREVO_SMTP_PASS || '';
+  const from = process.env.SMTP_FROM || process.env.BREVO_SMTP_FROM || '';
+  const host = process.env.SMTP_HOST || process.env.BREVO_SMTP_HOST || (user && pass ? 'smtp-relay.brevo.com' : '');
+  const port = Number(process.env.SMTP_PORT || process.env.BREVO_SMTP_PORT) || 587;
+  const secureRaw = process.env.SMTP_SECURE || process.env.BREVO_SMTP_SECURE || '';
+
+  return {
+    configured: Boolean(host && user && pass && from),
+    host,
+    port,
+    secure: String(secureRaw).toLowerCase() === 'true' || port === 465,
+    user,
+    pass,
+    from
+  };
+}
 
 // Sanitize response bodies before logging to avoid leaking OTPs, tokens, or secrets
 function sanitizeResponseBody(body) {
@@ -41,9 +70,10 @@ function sanitizeResponseBody(body) {
 }
 
 // Helper: send OTP using Supabase Auth REST endpoint (/auth/v1/otp)
-async function sendOtpViaRest(email) {
-  if (!supabaseUrl || !supabaseServiceKey) {
-    throw new Error('Supabase URL or service key not configured');
+async function sendOtpViaRest(email, options = {}) {
+  const authApiKey = supabaseAnonKey || supabaseServiceKey || '';
+  if (!supabaseUrl || !authApiKey) {
+    throw new Error('Supabase URL or auth API key not configured');
   }
 
   const url = supabaseUrl.replace(/\/$/, '') + '/auth/v1/otp';
@@ -66,14 +96,19 @@ async function sendOtpViaRest(email) {
   // Debug: log request payload (do NOT log service keys)
   try { console.log('[OTP REST SEND] POST', url, { email }); } catch (e) {}
 
+  const payload = {
+    email,
+    ...((options && typeof options === 'object') ? options : {})
+  };
+
   const res = await fetchFn(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      apikey: supabaseServiceKey,
-      Authorization: `Bearer ${supabaseServiceKey}`
+      apikey: authApiKey,
+      Authorization: `Bearer ${authApiKey}`
     },
-    body: JSON.stringify({ email })
+    body: JSON.stringify(payload)
   });
 
   // Read response as text then try to parse to preserve raw body for logging
@@ -101,8 +136,9 @@ async function sendOtpViaRest(email) {
 
 // Helper: verify OTP using Supabase Auth REST token endpoint (/auth/v1/token)
 async function verifyOtpViaRest(email, otp) {
-  if (!supabaseUrl || !supabaseServiceKey) {
-    throw new Error('Supabase URL or service key not configured');
+  const authApiKey = supabaseAnonKey || supabaseServiceKey || '';
+  if (!supabaseUrl || !authApiKey) {
+    throw new Error('Supabase URL or auth API key not configured');
   }
 
   const url = supabaseUrl.replace(/\/$/, '') + '/auth/v1/token';
@@ -137,8 +173,8 @@ async function verifyOtpViaRest(email, otp) {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
-      apikey: supabaseServiceKey,
-      Authorization: `Bearer ${supabaseServiceKey}`
+      apikey: authApiKey,
+      Authorization: `Bearer ${authApiKey}`
     },
     body: formBody
   });
@@ -188,13 +224,17 @@ router.post('/login', async (req, res) => {
       .single();
 
     if (error || !user) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      return res.json({ ok: false, error: 'Invalid credentials' });
+    }
+
+    if (isLegacyStaffPassword(user.role, password)) {
+      return res.json({ ok: false, error: 'Invalid credentials' });
     }
 
     // Verify password
     const passwordMatch = await bcrypt.compare(password, user.password_hash);
     if (!passwordMatch) {
-      return res.status(401).json({ error: 'Invalid credentials' });
+      return res.json({ ok: false, error: 'Invalid credentials' });
     }
 
     // Generate token
@@ -219,6 +259,7 @@ router.post('/login', async (req, res) => {
     }
 
     res.json({
+      ok: true,
       token,
       user: {
         id: user.id,
@@ -389,8 +430,8 @@ router.post('/otp/send', async (req, res) => {
 
     // Determine available OTP delivery mechanism. Prefer SMTP (Nodemailer) if configured,
     // otherwise fall back to Supabase Auth REST (existing behavior).
-    const smtpConfigured = Boolean(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS && process.env.SMTP_FROM);
-    if (!smtpConfigured && !supabaseServiceKey) {
+    const smtpConfig = getSmtpConfig();
+    if (!smtpConfig.configured && !supabaseServiceKey) {
       return res.status(500).json({ error: 'OTP service not configured on server' });
     }
 
@@ -437,7 +478,7 @@ router.post('/otp/send', async (req, res) => {
     }
 
     // If SMTP available, generate OTP, store hashed, and send via SMTP
-    if (smtpConfigured) {
+    if (smtpConfig.configured) {
       try {
         const otp = String(crypto.randomInt(10000000, 100000000));
         const otpHash = await bcrypt.hash(otp, 10);
@@ -461,17 +502,17 @@ router.post('/otp/send', async (req, res) => {
         }
 
         const transporter = nodemailer.createTransport({
-          host: process.env.SMTP_HOST,
-          port: Number(process.env.SMTP_PORT) || 587,
-          secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true' || Number(process.env.SMTP_PORT) === 465,
+          host: smtpConfig.host,
+          port: smtpConfig.port,
+          secure: smtpConfig.secure,
           auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS
+            user: smtpConfig.user,
+            pass: smtpConfig.pass
           }
         });
 
         const mailOptions = {
-          from: process.env.SMTP_FROM,
+          from: smtpConfig.from,
           to: lowerEmail,
           subject: 'Your ConcernTrack verification code',
           text: `Your ConcernTrack verification code is ${otp}. It expires in 5 minutes.`,
@@ -544,12 +585,15 @@ router.post('/otp/verify', async (req, res) => {
     otpLogs.push(verifyAttempt);
     while (otpLogs.length > 200) otpLogs.shift();
 
-    if (!supabaseServiceKey) {
+    const smtpConfig = getSmtpConfig();
+    if (!supabaseServiceKey && !smtpConfig.configured) {
       verifyAttempt.status = 'no_service_key';
       return res.status(500).json({ error: 'OTP service not configured on server' });
     }
 
     // Verify OTP against our local DB-stored hashed OTPs (preferred).
+    // If SMTP is not configured, sends fall back to Supabase Auth REST, so verification
+    // must use the matching Supabase REST token exchange when no local OTP row exists.
     try {
       const db = supabaseAdmin || supabase;
       const nowIso = new Date().toISOString();
@@ -569,31 +613,42 @@ router.post('/otp/verify', async (req, res) => {
       }
 
       if (!otpRow) {
-        // No OTP found for this email
-        verifyAttempt.status = 'no_otp_found';
-        return res.status(400).json({ error: 'Invalid or expired OTP', message: 'No OTP found for this email' });
-      }
+        if (smtpConfig.configured) {
+          verifyAttempt.status = 'no_otp_found';
+          return res.status(400).json({ error: 'Invalid or expired OTP', message: 'No OTP found for this email' });
+        }
 
-      if (!otpRow.expires_at || new Date(otpRow.expires_at).getTime() < Date.now()) {
-        verifyAttempt.status = 'otp_expired';
-        return res.status(400).json({ error: 'Invalid or expired OTP', message: 'OTP has expired' });
-      }
+        try {
+          const restResp = await verifyOtpViaRest(lowerEmail, trimmedToken);
+          verifyAttempt.status = 'verified_supabase_rest';
+          verifyAttempt.result = { rest: sanitizeResponseBody(restResp) };
+        } catch (restErr) {
+          verifyAttempt.status = 'invalid_supabase_rest_otp';
+          verifyAttempt.result = { restError: restErr.message, restBody: sanitizeResponseBody(restErr.body || null) };
+          return res.status(400).json({ error: 'Invalid or expired OTP', message: restErr.message || 'OTP verification failed' });
+        }
+      } else {
+        if (!otpRow.expires_at || new Date(otpRow.expires_at).getTime() < Date.now()) {
+          verifyAttempt.status = 'otp_expired';
+          return res.status(400).json({ error: 'Invalid or expired OTP', message: 'OTP has expired' });
+        }
 
-      const match = await bcrypt.compare(trimmedToken, otpRow.otp_hash || '');
-      if (!match) {
-        verifyAttempt.status = 'invalid_otp';
-        return res.status(400).json({ error: 'Invalid or expired OTP', message: 'OTP does not match' });
-      }
+        const match = await bcrypt.compare(trimmedToken, otpRow.otp_hash || '');
+        if (!match) {
+          verifyAttempt.status = 'invalid_otp';
+          return res.status(400).json({ error: 'Invalid or expired OTP', message: 'OTP does not match' });
+        }
 
-      // Mark OTP as used (best-effort)
-      try {
-        await db.from('otp_verifications').update({ used_at: new Date().toISOString() }).eq('id', otpRow.id);
-      } catch (markErr) {
-        console.warn('Failed to mark OTP used:', markErr && markErr.message ? markErr.message : markErr);
-      }
+        // Mark OTP as used (best-effort)
+        try {
+          await db.from('otp_verifications').update({ used_at: new Date().toISOString() }).eq('id', otpRow.id);
+        } catch (markErr) {
+          console.warn('Failed to mark OTP used:', markErr && markErr.message ? markErr.message : markErr);
+        }
 
-      verifyAttempt.status = 'verified_local_db';
-      verifyAttempt.result = { otpId: otpRow.id };
+        verifyAttempt.status = 'verified_local_db';
+        verifyAttempt.result = { otpId: otpRow.id };
+      }
     } catch (e) {
       console.error('OTP verify error:', e && e.message ? e.message : e);
       return res.status(500).json({ error: 'OTP verification failed', message: e && e.message ? e.message : String(e) });
@@ -704,9 +759,357 @@ router.post('/otp/verify', async (req, res) => {
   }
 });
 
+async function findStudentByUsernameOrId(value) {
+  const raw = String(value || '').trim();
+  const lower = raw.toLowerCase();
+  if (!raw) return null;
+
+  const db = supabaseAdmin || supabase;
+
+  let result = await db
+    .from('users')
+    .select('id, username, full_name, email, role, student_id')
+    .eq('username', lower)
+    .maybeSingle();
+
+  if (result.error) {
+    throw result.error;
+  }
+
+  if (!result.data && raw !== lower) {
+    result = await db
+      .from('users')
+      .select('id, username, full_name, email, role, student_id')
+      .eq('username', raw)
+      .maybeSingle();
+
+    if (result.error) {
+      throw result.error;
+    }
+  }
+
+  if (!result.data) {
+    result = await db
+      .from('users')
+      .select('id, username, full_name, email, role, student_id')
+      .eq('student_id', raw)
+      .maybeSingle();
+
+    if (result.error) {
+      throw result.error;
+    }
+  }
+
+  if (!result.data && raw.includes('@')) {
+    result = await db
+      .from('users')
+      .select('id, username, full_name, email, role, student_id')
+      .eq('email', lower)
+      .maybeSingle();
+
+    if (result.error) {
+      throw result.error;
+    }
+  }
+
+  const user = result.data || null;
+  if (!user || String(user.role || '').toLowerCase() !== 'student') {
+    return null;
+  }
+
+  return user;
+}
+
+async function createStoredOtp(email, purpose) {
+  const db = supabaseAdmin || supabase;
+  const otp = String(crypto.randomInt(10000000, 100000000));
+  const otpHash = await bcrypt.hash(otp, 10);
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+
+  const { data: inserted, error: insertErr } = await db
+    .from('otp_verifications')
+    .insert([{
+      email,
+      otp_hash: otpHash,
+      purpose,
+      expires_at: expiresAt,
+      created_at: new Date().toISOString()
+    }])
+    .select()
+    .single();
+
+  if (insertErr || !inserted) {
+    throw new Error(insertErr?.message || 'Failed to generate OTP');
+  }
+
+  return { id: inserted.id, otp, expiresAt };
+}
+
+async function sendLocalOtpEmail({ email, purpose, subject, text, html }) {
+  const smtpConfig = getSmtpConfig();
+  if (!smtpConfig.configured) {
+    throw new Error('SMTP is not configured');
+  }
+
+  const { id, otp, expiresAt } = await createStoredOtp(email, purpose);
+
+  const transporter = nodemailer.createTransport({
+    host: smtpConfig.host,
+    port: smtpConfig.port,
+    secure: smtpConfig.secure,
+    auth: {
+      user: smtpConfig.user,
+      pass: smtpConfig.pass
+    }
+  });
+
+  const info = await transporter.sendMail({
+    from: smtpConfig.from,
+    to: email,
+    subject,
+    text: text.replace('{{otp}}', otp),
+    html: html.replace('{{otp}}', otp)
+  });
+
+  return { id, otp, expiresAt, messageId: info && info.messageId ? info.messageId : null };
+}
+
+async function verifyLocalOrRestOtp(email, token, purpose) {
+  const lowerEmail = String(email || '').trim().toLowerCase();
+  const trimmedToken = String(token || '').trim();
+  const db = supabaseAdmin || supabase;
+  const smtpConfig = getSmtpConfig();
+
+  const { data: otpRow, error: otpErr } = await db
+    .from('otp_verifications')
+    .select('*')
+    .eq('email', lowerEmail)
+    .eq('purpose', purpose)
+    .is('used_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (otpErr) {
+    throw new Error('Unable to verify OTP');
+  }
+
+  if (!otpRow) {
+    if (smtpConfig.configured) {
+      const err = new Error('Invalid or expired OTP');
+      err.status = 400;
+      throw err;
+    }
+
+    await verifyOtpViaRest(lowerEmail, trimmedToken);
+    return;
+  }
+
+  if (!otpRow.expires_at || new Date(otpRow.expires_at).getTime() < Date.now()) {
+    const err = new Error('OTP has expired');
+    err.status = 400;
+    throw err;
+  }
+
+  const match = await bcrypt.compare(trimmedToken, otpRow.otp_hash || '');
+  if (!match) {
+    const err = new Error('OTP does not match');
+    err.status = 400;
+    throw err;
+  }
+
+  try {
+    await db.from('otp_verifications').update({ used_at: new Date().toISOString() }).eq('id', otpRow.id);
+  } catch (markErr) {
+    console.warn('Failed to mark OTP used:', markErr && markErr.message ? markErr.message : markErr);
+  }
+}
+
+router.get('/password-reset/status', (req, res) => {
+  res.json({
+    ok: true,
+    route: 'password-reset',
+    smtpConfigured: getSmtpConfig().configured,
+    supabaseServiceKeyConfigured: !!supabaseServiceKey
+  });
+});
+
+router.post('/password-reset/send', async (req, res) => {
+  try {
+    const username = String(req.body?.username || req.body?.student_id || '').trim();
+    if (!username) {
+      return res.status(400).json({ error: 'Student ID is required', message: 'Student ID is required' });
+    }
+
+    const user = await findStudentByUsernameOrId(username);
+    if (!user || !user.email) {
+      return res.status(404).json({ error: 'Student account not found', message: 'Student account not found' });
+    }
+
+    const lowerEmail = String(user.email || '').trim().toLowerCase();
+    if (!lowerEmail.endsWith('@uv.edu.ph')) {
+      return res.status(400).json({ error: 'Registered email is not a university email', message: 'Registered email is not a university email' });
+    }
+
+    const sendAttempt = {
+      time: new Date().toISOString(),
+      action: 'password_reset_send',
+      email: lowerEmail,
+      username: user.username,
+      ip: req.ip || req.headers['x-forwarded-for'] || null,
+      status: 'started'
+    };
+    otpLogs.push(sendAttempt);
+    while (otpLogs.length > 200) otpLogs.shift();
+
+    const db = supabaseAdmin || supabase;
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        const nowIso = new Date().toISOString();
+        const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+        const { data: recentActiveSends, error: recentErr } = await db
+          .from('otp_verifications')
+          .select('created_at, expires_at, used_at')
+          .eq('email', lowerEmail)
+          .eq('purpose', 'password_reset')
+          .is('used_at', null)
+          .gte('created_at', fifteenMinutesAgo)
+          .gte('expires_at', nowIso);
+        if (!recentErr && Array.isArray(recentActiveSends) && recentActiveSends.length >= 3) {
+          sendAttempt.status = 'rate_limited_active';
+          return res.status(429).json({ error: 'Too many active OTP requests. Please wait a few minutes and try again.' });
+        }
+
+        const { data: lastRow, error: lastErr } = await db
+          .from('otp_verifications')
+          .select('created_at')
+          .eq('email', lowerEmail)
+          .eq('purpose', 'password_reset')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!lastErr && lastRow && lastRow.created_at) {
+          const lastMs = new Date(lastRow.created_at).getTime();
+          if (Date.now() - lastMs < 30 * 1000) {
+            sendAttempt.status = 'cooldown';
+            return res.status(429).json({ error: 'OTP recently sent. Please wait before resending.' });
+          }
+        }
+      } catch (rlErr) {
+        console.warn('Password reset rate-limit check failed:', rlErr && rlErr.message ? rlErr.message : rlErr);
+      }
+    }
+
+    const smtpConfig = getSmtpConfig();
+    if (smtpConfig.configured) {
+      const result = await sendLocalOtpEmail({
+        email: lowerEmail,
+        purpose: 'password_reset',
+        subject: 'Your ConcernTrack password reset code',
+        text: 'Your ConcernTrack password reset code is {{otp}}. It expires in 5 minutes.',
+        html: '<p>Your ConcernTrack password reset code is <strong>{{otp}}</strong>. It expires in 5 minutes.</p>'
+      });
+      sendAttempt.status = 'sent_smtp';
+      sendAttempt.result = { otpId: result.id, smtpMessageId: result.messageId };
+      return res.json({ ok: true, email: lowerEmail.replace(/^(.{2}).*(@.*)$/, '$1***$2') });
+    }
+
+    if (!supabaseServiceKey) {
+      sendAttempt.status = 'no_otp_service';
+      return res.status(500).json({ error: 'OTP service not configured on server' });
+    }
+
+    try {
+      const restResp = await sendOtpViaRest(lowerEmail);
+      sendAttempt.status = 'sent_rest';
+      sendAttempt.result = { rest: sanitizeResponseBody(restResp) };
+      return res.json({ ok: true, email: lowerEmail.replace(/^(.{2}).*(@.*)$/, '$1***$2') });
+    } catch (restErr) {
+      sendAttempt.status = 'failed_rest';
+      sendAttempt.result = { restError: restErr.message, restBody: sanitizeResponseBody(restErr.body || null) };
+
+      throw restErr;
+    }
+  } catch (error) {
+    console.error('Password reset OTP send error:', error);
+    const payload = { error: 'Failed to send password reset OTP', message: error.message };
+    if (process.env.NODE_ENV !== 'production' && error && error.body) {
+      payload.details = sanitizeResponseBody(error.body);
+    }
+    res.status(error.status || 500).json(payload);
+  }
+});
+
+router.post('/password-reset/verify', async (req, res) => {
+  try {
+    const username = String(req.body?.username || req.body?.student_id || '').trim();
+    const token = String(req.body?.token || '').trim();
+    const password = String(req.body?.password || '');
+
+    if (!username || !token || !password) {
+      return res.status(400).json({ error: 'Student ID, OTP, and new password are required' });
+    }
+
+    if (!/^[0-9]{8}$/.test(token)) {
+      return res.status(400).json({ error: 'Please enter the 8-digit OTP code' });
+    }
+
+    if (password.length < 6) {
+      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    }
+
+    const user = await findStudentByUsernameOrId(username);
+    if (!user || !user.email) {
+      return res.status(404).json({ error: 'Student account not found', message: 'Student account not found' });
+    }
+
+    const lowerEmail = String(user.email || '').trim().toLowerCase();
+    await verifyLocalOrRestOtp(lowerEmail, token, 'password_reset');
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const db = supabaseAdmin || supabase;
+    const { data: updatedUser, error: updateError } = await db
+      .from('users')
+      .update({ password_hash: passwordHash })
+      .eq('id', user.id)
+      .select('id, username, full_name, email, role, student_id, course, year_level')
+      .single();
+
+    if (updateError || !updatedUser) {
+      throw new Error(updateError?.message || 'Failed to update password');
+    }
+
+    res.json({
+      ok: true,
+      user: {
+        id: updatedUser.id,
+        username: updatedUser.username,
+        full_name: updatedUser.full_name,
+        name: updatedUser.full_name,
+        role: updatedUser.role,
+        email: updatedUser.email,
+        student_id: updatedUser.student_id,
+        course: updatedUser.course,
+        year_level: updatedUser.year_level
+      }
+    });
+  } catch (error) {
+    console.error('Password reset verify error:', error);
+    res.status(error.status || 500).json({ error: 'Password reset failed', message: error.message });
+  }
+});
+
 // Debug endpoint: inspect recent OTP attempts and configuration state
 router.get('/otp/debug', (req, res) => {
   try {
+    const debugKey = process.env.OTP_DEBUG_KEY || '';
+    if (debugKey && req.headers['x-debug-key'] !== debugKey) {
+      return res.status(403).json({ ok: false, error: 'Forbidden' });
+    }
+    if (!debugKey && process.env.NODE_ENV === 'production') {
+      return res.status(404).json({ ok: false, error: 'Not found' });
+    }
+
     res.json({
       ok: true,
       supabaseAdminAvailable: !!supabaseAdmin,

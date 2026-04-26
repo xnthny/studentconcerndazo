@@ -166,6 +166,24 @@ router.patch('/:ticketId/status', verifyToken, async (req, res) => {
   try {
     const { ticketId } = req.params;
     const { status, staffNote } = req.body;
+    const role = String(req.user?.role || '').toLowerCase();
+
+    const { data: existingTicket, error: lookupError } = await supabase
+      .from('tickets')
+      .select('id, department')
+      .eq('id', ticketId)
+      .single();
+
+    if (lookupError) throw lookupError;
+
+    const department = String(existingTicket?.department || '').toLowerCase();
+    const canUpdate =
+      (role === 'accounting' && department === 'accounting') ||
+      (role === 'registrar' && department === 'registrar');
+
+    if (!canUpdate) {
+      return res.status(403).json({ error: 'Only the assigned department can update this ticket status' });
+    }
 
     const { data: updatedTicket, error } = await supabase
       .from('tickets')

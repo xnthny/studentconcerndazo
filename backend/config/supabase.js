@@ -22,4 +22,4 @@ if (!supabaseServiceKey) {
 	}
 }
 
-module.exports = { supabase, supabaseServiceKey, supabaseAdmin, supabaseUrl };
+module.exports = { supabase, supabaseAnonKey, supabaseServiceKey, supabaseAdmin, supabaseUrl };
